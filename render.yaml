@@ -1,0 +1,28 @@
+# Blueprint do Render. Use apenas 1 instancia: o monitor roda dentro do
+# processo, e varias instancias enviariam alertas duplicados.
+services:
+  - type: web
+    name: crypto-signals
+    runtime: python
+    plan: free              # troque por "starter" (US$ 7/mes) para ficar sempre ligado
+    region: frankfurt       # Binance costuma bloquear IPs dos EUA
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: EXCHANGE
+        value: binance
+      - key: ENABLE_MONITOR
+        value: "1"
+      - key: WATCHLIST
+        value: BTC/USDT:4h,ETH/USDT:4h
+      - key: POLL_SECONDS
+        value: "300"
+      - key: API_KEY
+        generateValue: true
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
