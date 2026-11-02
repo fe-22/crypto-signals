@@ -59,16 +59,18 @@ Documentação interativa: <http://127.0.0.1:8000/docs>.
 | `GET /health` | Verificação de saúde, sem autenticação |
 | `GET /` | Página inicial com a arte do projeto |
 | `GET /info` | Informações básicas e rotas disponíveis em JSON |
-| `GET /signal?symbol=BTC/USDT&tf=4h` | Sinal e indicadores da última vela fechada |
-| `GET /opportunities?tf=4h&exchange=binance` | Radar técnico de criptomoedas conhecidas e motivos do sinal |
+| `GET /signal?symbol=BTC/USDT&tf=4h` | Sinal e indicadores da última vela fechada, sem chave |
+| `GET /opportunities?tf=4h&exchange=binance` | Radar técnico de criptomoedas conhecidas e motivos do sinal, sem chave |
 | `GET /currencies` | Cotações indicativas de USD, EUR e GBP em BRL (fonte Frankfurter/ECB) |
-| `GET /backtest?symbol=BTC/USDT&tf=1d&years=5&strategy=trend` | Métricas do backtest |
+| `GET /backtest?symbol=BTC/USDT&tf=1d&years=5&strategy=trend` | Métricas do backtest, sem chave |
 | `GET /status` | Estado do monitor e últimos erros (requer `X-API-Key` se configurada) |
-| `POST /monitor/start` | Inicia o monitor com `{"watchlist":"BTC/USDT:4h","exchange":"binance"}` |
-| `POST /monitor/stop` | Solicita a parada do monitor |
+| `POST /monitor/start` | Inicia o monitor com `{"watchlist":"BTC/USDT:4h","exchange":"binance"}` (requer chave se configurada) |
+| `POST /monitor/stop` | Solicita a parada do monitor (requer chave se configurada) |
 
-Parâmetros de timeframe aceitos pela API: `15m`, `1h`, `4h` e `1d`. Se
-`API_KEY` estiver definida, envie-a no header `X-API-Key` nas rotas protegidas.
+Parâmetros de timeframe aceitos pela API: `15m`, `1h`, `4h` e `1d`. As consultas
+de sinais, radar, câmbio e backtest são públicas. Se `API_KEY` estiver definida,
+informe-a no painel Bot monitor para consultar o estado e controlar o monitor;
+as rotas protegidas também aceitam o header `X-API-Key`.
 `/health` permanece público para verificações de disponibilidade.
 O painel inicial permite consultar sinais, executar backtests e iniciar/parar
 o monitor sem precisar usar diretamente a interface `/docs`. O radar compara

@@ -217,7 +217,6 @@
         <button class="tab" type="button" data-view="backtest">Backtest</button>
         <button class="tab" type="button" data-view="bot">Bot monitor</button>
       </nav>
-      <label class="key-field" for="api-key">Chave API <input id="api-key" type="password" autocomplete="off" placeholder="Se necessária"></label>
     </div>
 
     <main>
@@ -309,6 +308,7 @@
           <h2>Bot monitor</h2>
           <p>Acompanhe os ativos monitorados e controle alertas por mudança de sinal ou tendência.</p>
         </div>
+        <label class="key-field" for="api-key">Chave API do monitor <input id="api-key" type="password" autocomplete="off" placeholder="Necessária para controlar o monitor"></label>
         <form class="form-card form-grid" id="monitor-form">
           <label class="field">Lista de ativos<input name="watchlist" value="BTC/USDT:4h,ETH/USDT:4h" placeholder="BTC/USDT:4h,ETH/USDT:4h" required></label>
           <label class="field">Corretora<select name="exchange"><option>binance</option><option>kraken</option><option>bybit</option><option>okx</option><option>coinbase</option></select></label>
@@ -624,7 +624,6 @@
       }
     }
     refreshHealth();
-    refreshMonitor();
     refreshCurrencies();
     window.setInterval(refreshHealth, 30000);
     window.setInterval(refreshCurrencies, 1800000);

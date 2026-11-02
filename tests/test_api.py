@@ -9,6 +9,17 @@ import api
 
 
 class HomepageTests(unittest.TestCase):
+    def test_market_data_routes_are_public_but_monitor_routes_remain_protected(self):
+        routes = {route.path: route for route in api.app.routes if hasattr(route, "dependant")}
+
+        for path in ("/signal", "/opportunities", "/backtest", "/currencies"):
+            dependencies = {item.call for item in routes[path].dependant.dependencies}
+            self.assertNotIn(api.auth, dependencies, path)
+
+        for path in ("/status", "/monitor/start", "/monitor/stop"):
+            dependencies = {item.call for item in routes[path].dependant.dependencies}
+            self.assertIn(api.auth, dependencies, path)
+
     def test_homepage_serves_project_artwork_page(self):
         response = api.root()
 

@@ -161,13 +161,12 @@ def info():
 
 
 @app.get("/signal")
-def signal(symbol: str = "BTC/USDT", tf: str = "4h", exchange: str | None = None,
-           _=Depends(auth)):
+def signal(symbol: str = "BTC/USDT", tf: str = "4h", exchange: str | None = None):
     return call(service.build_signal, *validate(symbol, tf, exchange))
 
 
 @app.get("/opportunities")
-def opportunities(tf: str = "4h", exchange: str | None = None, _=Depends(auth)):
+def opportunities(tf: str = "4h", exchange: str | None = None):
     _, tf, exchange = validate("BTC/USDT", tf, exchange)
     return call(service.scan_opportunities, tf, exchange)
 
@@ -198,8 +197,7 @@ def currencies():
 
 @app.get("/backtest")
 def backtest(symbol: str = "BTC/USDT", tf: str = "1d", years: float = 5,
-             strategy: str = "trend", exchange: str | None = None, split: float = 0.7,
-             _=Depends(auth)):
+             strategy: str = "trend", exchange: str | None = None, split: float = 0.7):
     symbol, tf, exchange = validate(symbol, tf, exchange)
     if strategy not in ("trend", "score"):
         raise HTTPException(422, "strategy deve ser 'trend' ou 'score'")
