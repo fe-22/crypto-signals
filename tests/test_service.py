@@ -4,6 +4,33 @@ from unittest.mock import Mock, patch
 import service
 
 
+class ExchangeFallbackTests(unittest.TestCase):
+    def test_restricted_location_automatically_uses_another_exchange(self):
+        attempts = []
+
+        def fetch(symbol, exchange):
+            attempts.append(exchange)
+            if exchange == "binance":
+                raise RuntimeError("Service unavailable from a restricted location")
+            return {"symbol": symbol, "exchange": exchange}
+
+        with patch.object(service, "EXCHANGE_FALLBACKS", ("binance", "kraken", "bybit")):
+            data, exchange = service._fetch_market_data(fetch, "BTC/USDT", exchange="binance")
+
+        self.assertEqual(attempts, ["binance", "kraken"])
+        self.assertEqual(exchange, "kraken")
+        self.assertEqual(data["exchange"], "kraken")
+
+    def test_other_errors_are_not_retried_on_different_exchanges(self):
+        fetch = Mock(side_effect=RuntimeError("network timeout"))
+
+        with patch.object(service, "EXCHANGE_FALLBACKS", ("binance", "kraken")):
+            with self.assertRaisesRegex(RuntimeError, "network timeout"):
+                service._fetch_market_data(fetch, "BTC/USDT", exchange="binance")
+
+        fetch.assert_called_once_with("BTC/USDT", "binance")
+
+
 class CurrencyRateTests(unittest.TestCase):
     def test_rates_are_converted_from_brl_to_foreign_currency_prices(self):
         response = Mock()

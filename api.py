@@ -138,8 +138,8 @@ def call(fn, *args):
         print("erro:", repr(e))
         raise HTTPException(
             502,
-            "Falha ao consultar a corretora. Se o log mostrar 'restricted location', "
-            "troque a variavel EXCHANGE ou a regiao do servico.",
+            "Falha ao consultar a corretora. Em caso de bloqueio regional, o sistema "
+            "tenta outras corretoras automaticamente. Consulte os logs para detalhes.",
         )
 
 

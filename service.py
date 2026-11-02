@@ -24,6 +24,7 @@ OPPORTUNITY_SYMBOLS = (
     "ADA/USDT",
     "DOGE/USDT",
 )
+EXCHANGE_FALLBACKS = ("binance", "kraken", "bybit", "okx", "coinbase")
 
 _cache = {}
 _lock = threading.Lock()
@@ -53,14 +54,52 @@ def _cached(key, ttl, fn):
     return value
 
 
+def _is_location_restriction(error):
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "restricted location",
+        "restricted region",
+        "regional restriction",
+        "geographic restriction",
+        "geo-restricted",
+        "not available from your location",
+        "unavailable in your jurisdiction",
+        "451",
+    ))
+
+
+def _fetch_market_data(fetcher, *args, exchange):
+    try:
+        return fetcher(*args, exchange), exchange
+    except Exception as error:
+        if not _is_location_restriction(error):
+            raise
+
+        print(f"[exchange] {exchange} bloqueada por restricao geografica; tentando alternativas")
+        for fallback in EXCHANGE_FALLBACKS:
+            if fallback == exchange:
+                continue
+            try:
+                data = fetcher(*args, fallback)
+                print(f"[exchange] consulta concluida usando {fallback}")
+                return data, fallback
+            except Exception as fallback_error:
+                print(f"[exchange] falha em {fallback}: {fallback_error!r}")
+        raise
+
+
 # ----------------------------------------------------------------------------
 # Sinal atual
 # ----------------------------------------------------------------------------
 
 def build_signal(symbol, tf, exchange):
     """Sinal da ULTIMA VELA FECHADA, em formato JSON-friendly."""
-    df = _cached(("ohlcv", symbol, tf, exchange), CACHE_TTL,
-                 lambda: cs.fetch_ohlcv(symbol, tf, 1000, exchange)).iloc[:-1]
+    df, used_exchange = _cached(
+        ("ohlcv", symbol, tf, exchange),
+        CACHE_TTL,
+        lambda: _fetch_market_data(cs.fetch_ohlcv, symbol, tf, 1000, exchange=exchange),
+    )
+    df = df.iloc[:-1]
     d = cs.analyze(df)
     if d.empty:
         raise ValueError("historico insuficiente para calcular os indicadores")
@@ -70,7 +109,7 @@ def build_signal(symbol, tf, exchange):
     return {
         "symbol": symbol,
         "timeframe": tf,
-        "exchange": exchange,
+        "exchange": used_exchange,
         "candle_open_time": d.index[-1].isoformat(),
         "price": price,
         "signal": row.signal,                       # v1: COMPRAR / AGUARDAR / EVITAR
@@ -193,13 +232,16 @@ def run_backtest(symbol, tf, years, strategy, exchange, split=0.7):
 
     def job():
         with _backtest_slot:
-            d = cs.analyze(cs.fetch_history(symbol, tf, years, exchange))
+            history, used_exchange = _fetch_market_data(
+                cs.fetch_history, symbol, tf, years, exchange=exchange
+            )
+            d = cs.analyze(history)
             if d.empty:
                 raise ValueError("historico insuficiente para o backtest")
-            return cs.backtest(d, strategy, split=split)
+            return cs.backtest(d, strategy, split=split), used_exchange
 
-    result = _cached(("bt", symbol, tf, years, strategy, exchange, split), BACKTEST_TTL, job)
-    return {"symbol": symbol, "timeframe": tf, "strategy": strategy,
+    result, used_exchange = _cached(("bt", symbol, tf, years, strategy, exchange, split), BACKTEST_TTL, job)
+    return {"symbol": symbol, "timeframe": tf, "strategy": strategy, "exchange": used_exchange,
             "results": result, "disclaimer": DISCLAIMER}
 
 

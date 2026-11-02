@@ -40,6 +40,9 @@ Modos disponíveis: `now`, `backtest` e `live`. Estratégias: `trend` (segue a
 tendência de longo prazo) e `score` (usa a pontuação dos indicadores). O
 argumento `--exchange` aceita um identificador de exchange suportado pelo
 CCXT, como `binance`, `kraken`, `bybit`, `okx` ou `coinbase`.
+Na API e no monitor, se uma corretora retornar erro de restrição geográfica,
+o sistema tenta automaticamente as outras corretoras suportadas e informa qual
+foi usada no resultado.
 
 ## API
 
