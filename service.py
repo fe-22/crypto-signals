@@ -3,14 +3,27 @@ Camada de servico: reaproveita crypto_signals.py (sem depender do FastAPI).
 Cuida de cache, montagem do sinal em JSON, backtest sob demanda e monitoramento.
 """
 import os
+import math
 import threading
 import time
 from datetime import datetime, timezone
+
+import requests
 
 import crypto_signals as cs
 
 CACHE_TTL = int(os.getenv("CACHE_TTL", "60"))   # segundos (candles)
 BACKTEST_TTL = 3600                             # segundos (resultado de backtest)
+CURRENCY_RATES_TTL = 1800                       # atualizacao diaria da fonte ECB
+OPPORTUNITY_SYMBOLS = (
+    "BTC/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "DOGE/USDT",
+)
 
 _cache = {}
 _lock = threading.Lock()
@@ -69,6 +82,105 @@ def build_signal(symbol, tf, exchange):
         "reasons": cs.explain(row),
         "disclaimer": DISCLAIMER,
     }
+
+
+def scan_opportunities(tf, exchange):
+    """Compara sinais tecnicos de uma lista fixa de ativos liquidos."""
+    analyzed = []
+    errors = []
+    for symbol in OPPORTUNITY_SYMBOLS:
+        try:
+            signal = build_signal(symbol, tf, exchange)
+        except Exception as exc:
+            print(f"[opportunities] falha ao analisar {symbol}: {exc!r}")
+            errors.append({"symbol": symbol, "error": "Dados indisponiveis para este ativo nesta corretora."})
+            continue
+
+        if signal["signal"] == "COMPRAR":
+            rationale = [
+                f"Score tecnico {signal['score']} atingiu o limiar de compra (4).",
+                "A volatilidade nao ultrapassou o limite historico definido pelo sistema.",
+            ]
+        else:
+            rationale = [
+                f"O sinal atual e {signal['signal']} com score {signal['score']}; nao atende ao criterio tecnico de compra (score >= 4).",
+            ]
+        rationale.append(signal["reasons"])
+        if signal["trend_following"] == "EM_TENDENCIA":
+            rationale.append("Tendencia de longo prazo confirmada pelo criterio EMA50/EMA200.")
+        if signal["volatility_extreme"]:
+            rationale.append("Volatilidade extrema: o sistema sinaliza cautela.")
+
+        analyzed.append({**signal, "rationale": rationale})
+
+    if not analyzed:
+        raise RuntimeError("Nao foi possivel analisar nenhum ativo; verifique a corretora e tente novamente.")
+
+    analyzed.sort(
+        key=lambda item: (
+            item["signal"] == "COMPRAR",
+            item["score"],
+            item["trend_following"] == "EM_TENDENCIA",
+            not item["volatility_extreme"],
+        ),
+        reverse=True,
+    )
+    candidates = [item["symbol"] for item in analyzed if item["signal"] == "COMPRAR"]
+    return {
+        "timeframe": tf,
+        "exchange": exchange,
+        "analyzed_at": _now(),
+        "symbols_analyzed": len(analyzed),
+        "candidates": candidates,
+        "assets": analyzed,
+        "unavailable": errors,
+        "method": "Indicadores tecnicos EMA50/EMA200, RSI, MACD, ATR e score; ultima vela fechada.",
+        "disclaimer": (
+            "Radar educativo, nao e recomendacao de investimento nem previsao de lucro. "
+            "Sinais tecnicos podem falhar e nao avaliam noticias, fundamentos, liquidez, "
+            "custos ou adequacao ao seu perfil."
+        ),
+    }
+
+
+def build_currency_rates():
+    """Cotacoes indicativas de moedas estrangeiras em reais."""
+    def fetch():
+        response = requests.get(
+            "https://api.frankfurter.app/latest",
+            params={"from": "BRL", "to": "USD,EUR,GBP"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rates = payload.get("rates")
+        date = payload.get("date")
+        if payload.get("base") != "BRL" or not isinstance(rates, dict) or not date:
+            raise ValueError("resposta invalida da fonte de cotacoes")
+
+        currencies = {
+            "USD": "Dolar americano",
+            "EUR": "Euro",
+            "GBP": "Libra esterlina",
+        }
+        converted = {}
+        for code, name in currencies.items():
+            rate = rates.get(code)
+            if not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0:
+                raise ValueError(f"cotacao invalida para {code}")
+            converted[code] = {
+                "name": name,
+                "brl_per_unit": round(1 / rate, 4),
+            }
+        return {
+            "base_currency": "BRL",
+            "date": date,
+            "source": "Frankfurter (referencia do Banco Central Europeu)",
+            "rates": converted,
+            "disclaimer": "Cotacoes de referencia; podem diferir dos valores comerciais e de tempo real.",
+        }
+
+    return _cached(("currency-rates", "BRL"), CURRENCY_RATES_TTL, fetch)
 
 
 # ----------------------------------------------------------------------------
@@ -138,9 +250,9 @@ def check_once(items, exchange, notify=cs.notify):
     STATE["last_check"] = _now()
 
 
-def monitor_loop(stop_event):
-    items = parse_watchlist(os.getenv("WATCHLIST", "BTC/USDT:4h"))
-    exchange = os.getenv("EXCHANGE", "binance")
+def monitor_loop(stop_event, items=None, exchange=None):
+    items = items if items is not None else parse_watchlist(os.getenv("WATCHLIST", "BTC/USDT:4h"))
+    exchange = exchange or os.getenv("EXCHANGE", "binance")
     poll = max(60, int(os.getenv("POLL_SECONDS", "300")))
     STATE["started_at"] = _now()
     print(f"[monitor] iniciado: {items} em {exchange}, a cada {poll}s")

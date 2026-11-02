@@ -71,7 +71,9 @@ def rsi(close, n=14):
     gain = delta.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
-    return 100 - 100 / (1 + rs)
+    result = 100 - 100 / (1 + rs)
+    result = result.mask((loss == 0) & (gain > 0), 100)
+    return result.mask((loss == 0) & (gain == 0), 50)
 
 
 def atr(df, n=14):
@@ -179,10 +181,12 @@ def positions(d, strategy="trend", enter=4, exit_=1):
     return pd.Series(pos, index=d.index)
 
 
-def evaluate(d, pos, fee=0.001):
-    """Metricas de um trecho. `pos` ja deve estar deslocada (execucao na vela seguinte)."""
+def evaluate(d, pos, fee=0.001, trade_events=None):
+    """Metricas de um trecho. `pos` representa a exposicao em cada intervalo."""
+    if d.empty:
+        raise ValueError("nao ha dados suficientes para avaliar o periodo")
     ret = d["close"].pct_change().fillna(0)
-    trades = pos.diff().abs().fillna(0)
+    trades = trade_events if trade_events is not None else pos.diff().abs().fillna(0)
     strat = pos * ret - trades * fee
     equity = (1 + strat).cumprod()
     hold = (1 + ret).cumprod()
@@ -203,16 +207,27 @@ def evaluate(d, pos, fee=0.001):
 
 def backtest(d, strategy="trend", fee=0.001, split=0.7):
     """
-    A posicao e calculada UMA vez em todo o historico (so com dados passados) e
-    executada na vela SEGUINTE (sem look-ahead). Depois o resultado e medido no
-    periodo completo, nos primeiros `split` e no trecho final, que serve de teste.
+    Sinais sao calculados no fechamento e executados no fechamento da vela
+    seguinte. O retorno so comeca no intervalo posterior a execucao.
     """
-    pos = positions(d, strategy).shift(1).fillna(0)
+    if not 0 < split < 1:
+        raise ValueError("split deve estar entre 0 e 1")
+    if len(d) < 2:
+        raise ValueError("historico insuficiente para dividir o backtest")
+
+    signals = positions(d, strategy)
+    executed = signals.shift(1).fillna(0)
+    exposure = signals.shift(2).fillna(0)
+    trades = executed.diff().abs().fillna(0)
     k = int(len(d) * split)
+    if k == 0 or k == len(d):
+        raise ValueError("split deve deixar dados nos periodos inicial e de teste")
     return {
-        "periodo completo": evaluate(d, pos, fee),
-        f"{int(split * 100)}% inicial": evaluate(d.iloc[:k], pos.iloc[:k], fee),
-        f"{100 - int(split * 100)}% final (teste)": evaluate(d.iloc[k:], pos.iloc[k:], fee),
+        "periodo completo": evaluate(d, exposure, fee, trades),
+        f"{int(split * 100)}% inicial": evaluate(d.iloc[:k], exposure.iloc[:k], fee, trades.iloc[:k]),
+        f"{100 - int(split * 100)}% final (teste)": evaluate(
+            d.iloc[k:], exposure.iloc[k:], fee, trades.iloc[k:]
+        ),
     }
 
 
@@ -249,7 +264,15 @@ def run_live(symbol, tf, poll=60, exchange_id="binance"):
         try:
             df = fetch_ohlcv(symbol, tf, limit=1000, exchange_id=exchange_id)
             df = df.iloc[:-1]                      # descarta a vela ainda aberta
+            if df.empty:
+                print("Sem candles fechados disponiveis.")
+                time.sleep(poll)
+                continue
             d = analyze(df)
+            if d.empty:
+                print("Historico insuficiente para calcular os indicadores.")
+                time.sleep(poll)
+                continue
             row = d.iloc[-1]
             if d.index[-1] != last_candle:
                 last_candle = d.index[-1]
@@ -294,9 +317,12 @@ if __name__ == "__main__":
     else:
         raw = (fetch_history(a.symbol, a.tf, a.years, a.exchange) if a.years > 0
                else fetch_ohlcv(a.symbol, a.tf, 1000, a.exchange))
+        raw = raw.iloc[:-1]                         # descarta a vela ainda aberta
         d = analyze(raw)
+        if d.empty:
+            p.error("historico insuficiente para calcular os indicadores")
         if a.mode == "now":
-            r = d.iloc[-2]
+            r = d.iloc[-1]
             print(f"{a.symbol} {a.tf}: {r.signal} (score {r.score:+.0f}) | {explain(r)}")
         else:
             print(f"Estrategia: {a.strategy}")
