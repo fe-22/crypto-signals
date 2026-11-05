@@ -156,7 +156,8 @@ def root():
 @app.get("/info")
 def info():
     return {"name": "Crypto Signals", "docs": "/docs",
-            "endpoints": ["/signal", "/opportunities", "/currencies", "/backtest", "/status", "/health"],
+            "endpoints": ["/signal", "/opportunities", "/currencies", "/macro",
+                          "/market-history", "/backtest", "/status", "/health"],
             "disclaimer": service.DISCLAIMER}
 
 
@@ -181,6 +182,24 @@ def currencies():
     except ValueError as exc:
         print("resposta invalida de cotacoes:", repr(exc))
         raise HTTPException(502, "A fonte de cotacoes retornou dados invalidos.") from exc
+
+
+@app.get("/macro")
+def macro():
+    try:
+        return service.build_macro_indicators()
+    except requests.RequestException as exc:
+        print("erro ao consultar indicadores macroeconomicos:", repr(exc))
+        raise HTTPException(502, "Nao foi possivel consultar os indicadores macroeconomicos agora.") from exc
+    except ValueError as exc:
+        print("resposta invalida de indicadores macroeconomicos:", repr(exc))
+        raise HTTPException(502, "Uma das fontes retornou dados macroeconomicos invalidos.") from exc
+
+
+@app.get("/market-history")
+def market_history(symbol: str = "BTC/USDT", tf: str = "1d", exchange: str | None = None):
+    symbol, tf, exchange = validate(symbol, tf, exchange)
+    return call(service.build_price_history, symbol, tf, exchange)
 
 
 @app.get("/currencies")

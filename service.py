@@ -6,7 +6,8 @@ import os
 import math
 import threading
 import time
-from datetime import datetime, timezone
+from bisect import bisect_right
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -15,6 +16,8 @@ import crypto_signals as cs
 CACHE_TTL = int(os.getenv("CACHE_TTL", "60"))   # segundos (candles)
 BACKTEST_TTL = 3600                             # segundos (resultado de backtest)
 CURRENCY_RATES_TTL = 1800                       # atualizacao diaria da fonte ECB
+MACRO_TTL = 1800
+PRICE_HISTORY_TTL = 300
 OPPORTUNITY_SYMBOLS = (
     "BTC/USDT",
     "ETH/USDT",
@@ -220,6 +223,193 @@ def build_currency_rates():
         }
 
     return _cached(("currency-rates", "BRL"), CURRENCY_RATES_TTL, fetch)
+
+
+def build_price_history(symbol, tf, exchange):
+    """Precos das velas fechadas para o grafico do ativo."""
+    df, used_exchange = _cached(
+        ("price-history", symbol, tf, exchange),
+        PRICE_HISTORY_TTL,
+        lambda: _fetch_market_data(cs.fetch_ohlcv, symbol, tf, 250, exchange=exchange),
+    )
+    closed = df.iloc[:-1]
+    if closed.empty:
+        raise ValueError("nao ha candles fechados disponiveis para este ativo")
+    points = [
+        {"time": timestamp.isoformat(), "price": float(price)}
+        for timestamp, price in closed["close"].items()
+        if math.isfinite(float(price)) and float(price) > 0
+    ]
+    if not points:
+        raise ValueError("historico de precos invalido para este ativo")
+    return {
+        "symbol": symbol,
+        "timeframe": tf,
+        "exchange": used_exchange,
+        "points": points,
+        "source": "Candles publicos da corretora",
+    }
+
+
+def _fetch_selic_target():
+    response = requests.get(
+        "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1178/dados/ultimos/1",
+        params={"formato": "json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("a fonte do Banco Central nao retornou a meta Selic")
+    row = payload[-1]
+    try:
+        rate = float(str(row["valor"]).replace(",", "."))
+        date = datetime.strptime(row["data"], "%d/%m/%Y").date().isoformat()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("resposta invalida da meta Selic") from exc
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError("valor invalido da meta Selic")
+    return {"annual_rate_pct": rate, "date": date}
+
+
+def _fetch_brent_prices():
+    response = requests.get(
+        "https://query1.finance.yahoo.com/v8/finance/chart/BZ=F",
+        params={"range": "3mo", "interval": "1d"},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    try:
+        result = payload["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("resposta invalida do historico Brent") from exc
+    rows = []
+    for timestamp, close in zip(timestamps, closes):
+        if (isinstance(timestamp, (int, float)) and isinstance(close, (int, float))
+                and math.isfinite(close) and close > 0):
+            date = datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+            rows.append({"date": date, "brent_usd": float(close)})
+    if len(rows) < 2:
+        raise ValueError("historico insuficiente para o preco do Brent")
+    return rows
+
+
+def _fetch_usd_brl_history():
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=100)
+    response = requests.get(
+        f"https://api.frankfurter.app/{start_date.isoformat()}..{end_date.isoformat()}",
+        params={"from": "USD", "to": "BRL"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("historico USD/BRL invalido")
+    rates = payload.get("rates")
+    if payload.get("base") != "USD" or not isinstance(rates, dict) or not rates:
+        raise ValueError("historico USD/BRL invalido")
+    history = {}
+    for date, daily_rates in rates.items():
+        quote = daily_rates.get("BRL") if isinstance(daily_rates, dict) else None
+        if isinstance(quote, (int, float)) and math.isfinite(quote) and quote > 0:
+            history[date] = float(quote)
+    if not history:
+        raise ValueError("historico USD/BRL indisponivel")
+    return history
+
+
+def _percent_change(current, previous):
+    return round((current / previous - 1) * 100, 2)
+
+
+def build_macro_indicators():
+    """Indicadores de referencia e alerta heuristico de pressao nos combustiveis."""
+    def fetch():
+        selic = _fetch_selic_target()
+        brent_history = _fetch_brent_prices()
+        usd_history = _fetch_usd_brl_history()
+        usd_dates = sorted(usd_history)
+        history = []
+        for point in brent_history:
+            position = bisect_right(usd_dates, point["date"]) - 1
+            if position < 0:
+                continue
+            usd_brl = usd_history[usd_dates[position]]
+            history.append({
+                **point,
+                "usd_brl": round(usd_brl, 4),
+                "brent_brl": round(point["brent_usd"] * usd_brl, 2),
+            })
+        if len(history) < 2:
+            raise ValueError("historico insuficiente para comparar Brent e dolar")
+
+        latest = history[-1]
+        comparison_date = (
+            datetime.fromisoformat(latest["date"]).date() - timedelta(days=30)
+        ).isoformat()
+        baseline = history[0]
+        for point in history:
+            if point["date"] >= comparison_date:
+                baseline = point
+                break
+        usd_baseline_date = next((date for date in usd_dates if date >= comparison_date), None)
+        if usd_baseline_date is None:
+            usd_baseline_date = usd_dates[0]
+        usd_current = usd_history[usd_dates[-1]]
+        usd_change = _percent_change(usd_current, usd_history[usd_baseline_date])
+        brent_change = _percent_change(latest["brent_usd"], baseline["brent_usd"])
+        brent_brl_change = _percent_change(latest["brent_brl"], baseline["brent_brl"])
+        pressure = brent_brl_change >= 5
+
+        return {
+            "selic": {
+                **selic,
+                "description": "Meta Selic anual definida pelo Copom",
+                "source": "Banco Central do Brasil (SGS 1178)",
+            },
+            "brent": {
+                "usd_per_barrel": round(latest["brent_usd"], 2),
+                "brl_per_barrel": latest["brent_brl"],
+                "date": latest["date"],
+                "change_30d_pct": brent_change,
+                "source": "Yahoo Finance (BZ=F)",
+            },
+            "usd_brl": {
+                "brl_per_usd": round(usd_current, 4),
+                "date": usd_dates[-1],
+                "change_30d_pct": usd_change,
+                "source": "Frankfurter (referencia do Banco Central Europeu)",
+            },
+            "comparison": {
+                "brent_brl_change_30d_pct": brent_brl_change,
+                "baseline_date": baseline["date"],
+            },
+            "fuel_alert": {
+                "status": "ATENCAO" if pressure else "SEM_PRESSAO_FORTE",
+                "threshold_pct": 5,
+                "message": (
+                    f"Possivel pressao de alta: o custo de referencia do barril em reais "
+                    f"subiu {brent_brl_change:.2f}% em cerca de 30 dias."
+                    if pressure else
+                    f"Sem pressao forte pelo criterio adotado: variacao do barril em reais "
+                    f"de {brent_brl_change:.2f}% em cerca de 30 dias."
+                ),
+                "disclaimer": (
+                    "Indicador de pressao baseado em Brent e USD/BRL; nao representa "
+                    "previsao ou confirmacao de reajuste nos combustiveis. O repasse depende "
+                    "de impostos, distribuicao, politica de precos e outras condicoes."
+                ),
+            },
+            "history": history,
+            "analyzed_at": _now(),
+        }
+
+    return _cached(("macro-indicators",), MACRO_TTL, fetch)
 
 
 # ----------------------------------------------------------------------------

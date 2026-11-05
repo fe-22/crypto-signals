@@ -12,7 +12,7 @@ class HomepageTests(unittest.TestCase):
     def test_market_data_routes_are_public_but_monitor_routes_remain_protected(self):
         routes = {route.path: route for route in api.app.routes if hasattr(route, "dependant")}
 
-        for path in ("/signal", "/opportunities", "/backtest", "/currencies"):
+        for path in ("/signal", "/opportunities", "/backtest", "/currencies", "/macro", "/market-history"):
             dependencies = {item.call for item in routes[path].dependant.dependencies}
             self.assertNotIn(api.auth, dependencies, path)
 
@@ -64,6 +64,22 @@ class HomepageTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 api.currencies()
         self.assertEqual(error.exception.status_code, 502)
+
+    def test_macro_endpoint_returns_indicators_without_api_key(self):
+        expected = {"selic": {"annual_rate_pct": 15.0}, "fuel_alert": {"status": "SEM_PRESSAO_FORTE"}}
+        with patch.object(api.service, "build_macro_indicators", return_value=expected):
+            self.assertEqual(api.macro(), expected)
+
+    def test_market_history_uses_validated_asset_and_parameters(self):
+        expected = {"symbol": "ETH/USDT", "points": []}
+        with patch.object(api.service, "build_price_history", return_value=expected) as history:
+            self.assertEqual(api.market_history("ETH/USDT", "1d", "kraken"), expected)
+        history.assert_called_once_with("ETH/USDT", "1d", "kraken")
+
+    def test_market_history_rejects_invalid_assets(self):
+        with self.assertRaises(HTTPException) as error:
+            api.market_history("ETHUSDT", "1d", "binance")
+        self.assertEqual(error.exception.status_code, 422)
 
     def test_opportunities_endpoint_uses_validated_timeframe_and_exchange(self):
         expected = {"assets": [], "candidates": []}

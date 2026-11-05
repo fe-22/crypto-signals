@@ -134,6 +134,21 @@
     .rate-card .card-value { position: relative; z-index: 1; color: var(--cyan); font-size: 1.65rem; }
     .rate-card .card-label { position: relative; z-index: 1; }
     .rates-meta { margin: 11px 0 0; color: var(--muted); font-size: .79rem; }
+    .macro-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .macro-card .card-value { color: var(--cyan); }
+    .alert-banner { margin-top: 14px; padding: 16px 18px; border: 1px solid #32624f; border-radius: 12px; background: #10291f; color: #b6f3d9; line-height: 1.55; }
+    .alert-banner.warning { border-color: #775932; background: #302719; color: #ffe0a2; }
+    .chart-panel { margin-top: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: #0a1725; }
+    .chart-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+    .chart-heading h3 { margin: 0; font-size: 1rem; }
+    .chart-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 9px; }
+    .chart-controls .field { min-width: 120px; }
+    .chart-wrap { width: 100%; overflow: hidden; }
+    .price-chart { display: block; width: 100%; height: 260px; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0 0; color: var(--muted); font-size: .8rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-swatch { width: 11px; height: 3px; border-radius: 3px; background: var(--cyan); }
+    .legend-swatch.gold { background: var(--gold); }
     .opportunity-reasons { margin: 10px 0 0; padding-left: 18px; color: #b6c8da; font-size: .82rem; line-height: 1.55; }
     .opportunity-reasons li + li { margin-top: 5px; }
     .form-card { padding: 18px; }
@@ -170,6 +185,7 @@
     @media (max-width: 850px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .rates-grid { gap: 9px; }
+      .macro-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid .button { grid-column: span 2; }
     }
@@ -184,6 +200,7 @@
       .card { min-height: 100px; padding: 13px; }
       .card-value { font-size: 1.16rem; }
       .rates-grid { grid-template-columns: 1fr; }
+      .macro-grid { gap: 9px; }
       .rate-card { min-height: 104px; }
       .rates-heading { align-items: flex-start; }
       .form-grid { grid-template-columns: 1fr 1fr; }
@@ -238,6 +255,60 @@
           </div>
           <p class="rates-meta" id="currencies-meta"></p>
           <p class="message" id="currencies-message" role="status"></p>
+        </section>
+        <section aria-labelledby="macro-title">
+          <div class="rates-heading section-heading">
+            <div>
+              <h2 id="macro-title">Indicadores econômicos</h2>
+              <p>Referências de juros, petróleo e câmbio; atualização automática a cada 30 minutos.</p>
+            </div>
+            <button class="button secondary" id="refresh-macro" type="button">Atualizar indicadores</button>
+          </div>
+          <div class="macro-grid" id="macro-cards" aria-live="polite">
+            <div class="empty">Carregando indicadores...</div>
+          </div>
+          <div class="alert-banner" id="fuel-alert" role="status">Calculando pressão de custos dos combustíveis...</div>
+          <p class="rates-meta" id="macro-meta"></p>
+          <p class="message" id="macro-message" role="status"></p>
+          <div class="chart-panel">
+            <div class="chart-heading">
+              <h3>Brent em reais × dólar · comparação normalizada (base 100)</h3>
+            </div>
+            <div class="chart-wrap"><canvas class="price-chart" id="macro-chart" aria-label="Gráfico de variação comparativa do Brent em reais e dólar"></canvas></div>
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-swatch"></span>Brent em reais</span>
+              <span class="legend-item"><span class="legend-swatch gold"></span>Dólar em reais</span>
+            </div>
+          </div>
+          <p class="disclaimer">O alerta é uma estimativa de pressão externa baseada na variação de Brent convertido em reais; não confirma nem prevê reajustes nas bombas. O repasse depende de outros fatores e decisões de mercado.</p>
+        </section>
+        <section aria-labelledby="asset-chart-title">
+          <div class="chart-panel">
+            <div class="chart-heading">
+              <div>
+                <h3 id="asset-chart-title">Oscilação dos ativos digitais</h3>
+                <p class="muted">Histórico de preços de criptoativos nas corretoras disponíveis.</p>
+              </div>
+              <form class="chart-controls" id="asset-chart-form">
+                <label class="field">Ativo
+                  <select name="symbol">
+                    <option>BTC/USDT</option><option>ETH/USDT</option><option>BNB/USDT</option>
+                    <option>SOL/USDT</option><option>XRP/USDT</option><option>ADA/USDT</option><option>DOGE/USDT</option>
+                  </select>
+                </label>
+                <label class="field">Período
+                  <select name="tf"><option>1h</option><option>4h</option><option selected>1d</option><option>15m</option></select>
+                </label>
+                <label class="field">Corretora
+                  <select name="exchange"><option>binance</option><option>kraken</option><option>bybit</option><option>okx</option><option>coinbase</option></select>
+                </label>
+                <button class="button" type="submit">Ver gráfico</button>
+              </form>
+            </div>
+            <div class="chart-wrap"><canvas class="price-chart" id="asset-chart" aria-label="Gráfico histórico de preço do ativo selecionado"></canvas></div>
+            <p class="rates-meta" id="asset-chart-meta"></p>
+            <p class="message" id="asset-chart-message" role="status"></p>
+          </div>
         </section>
         <form class="form-card form-grid" id="dashboard-form">
           <label class="field">Ativo<input name="symbol" value="BTC/USDT" required pattern="[A-Za-z0-9]{2,10}/[A-Za-z0-9]{2,10}"></label>
@@ -412,6 +483,169 @@
         button.disabled = false;
       }
     }
+
+    let macroChartData = null;
+    let assetChartData = null;
+
+    function drawChart(canvas, series, normalize = false) {
+      if (!canvas || !series.length || !series.some((line) => line.values.length)) return;
+      const width = Math.max(320, canvas.clientWidth);
+      const height = 260;
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      const context = canvas.getContext('2d');
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const plotted = series.map((line) => {
+        const values = line.values.filter((value) => Number.isFinite(value));
+        const base = values[0];
+        return {
+          ...line,
+          values: normalize && base > 0 ? line.values.map((value) => value / base * 100) : line.values,
+        };
+      });
+      const values = plotted.flatMap((line) => line.values.filter(Number.isFinite));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = max - min || Math.abs(max) * 0.02 || 1;
+      const left = 64;
+      const right = width - 14;
+      const top = 14;
+      const bottom = height - 31;
+      context.font = '11px system-ui, sans-serif';
+      context.strokeStyle = '#203751';
+      context.fillStyle = '#91a5ba';
+      context.lineWidth = 1;
+      for (let tick = 0; tick <= 4; tick += 1) {
+        const y = top + (bottom - top) * tick / 4;
+        const value = max - span * tick / 4;
+        context.beginPath();
+        context.moveTo(left, y);
+        context.lineTo(right, y);
+        context.stroke();
+        context.fillText(value.toLocaleString('pt-BR', { maximumFractionDigits: 2 }), 3, y + 4);
+      }
+      plotted.forEach((line) => {
+        const valid = line.values.map((value, index) => ({ value, index })).filter((point) => Number.isFinite(point.value));
+        if (valid.length < 2) return;
+        context.beginPath();
+        valid.forEach(({ value, index }, pointIndex) => {
+          const x = left + (right - left) * index / Math.max(line.values.length - 1, 1);
+          const y = bottom - (value - min) / span * (bottom - top);
+          if (pointIndex === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.strokeStyle = line.color;
+        context.lineWidth = 2;
+        context.stroke();
+      });
+      const labels = series[0].labels || [];
+      if (labels.length) {
+        context.fillStyle = '#91a5ba';
+        context.textAlign = 'left';
+        context.fillText(labels[0], left, height - 8);
+        context.textAlign = 'right';
+        context.fillText(labels[labels.length - 1], right, height - 8);
+        context.textAlign = 'left';
+      }
+    }
+
+    function renderMacro(data) {
+      const cards = [
+        ['Meta Selic', `${Number(data.selic.annual_rate_pct).toLocaleString('pt-BR')}% a.a.`, `Copom · ${data.selic.date}`],
+        ['Brent', `$${Number(data.brent.usd_per_barrel).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / barril`, `${Number(data.brent.change_30d_pct).toLocaleString('pt-BR')}% em 30 dias`],
+        ['Dólar de referência', `R$ ${Number(data.usd_brl.brl_per_usd).toLocaleString('pt-BR', { minimumFractionDigits: 4 })}`, `${Number(data.usd_brl.change_30d_pct).toLocaleString('pt-BR')}% em 30 dias`],
+        ['Brent convertido', `R$ ${Number(data.brent.brl_per_barrel).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / barril`, `${Number(data.comparison.brent_brl_change_30d_pct).toLocaleString('pt-BR')}% em 30 dias`],
+      ];
+      const container = $('#macro-cards');
+      container.replaceChildren();
+      cards.forEach(([label, value, detail]) => {
+        const card = document.createElement('article');
+        card.className = 'card macro-card';
+        const title = document.createElement('div');
+        title.className = 'card-label';
+        title.textContent = label;
+        const quote = document.createElement('div');
+        quote.className = 'card-value';
+        quote.textContent = value;
+        const info = document.createElement('div');
+        info.className = 'card-label';
+        info.textContent = detail;
+        card.append(title, quote, info);
+        container.append(card);
+      });
+
+      const alert = $('#fuel-alert');
+      alert.className = `alert-banner${data.fuel_alert.status === 'ATENCAO' ? ' warning' : ''}`;
+      alert.textContent = `${data.fuel_alert.message} ${data.fuel_alert.disclaimer}`;
+      $('#macro-meta').textContent = `Fontes: Banco Central do Brasil, Yahoo Finance e Frankfurter · atualização ${new Date(data.analyzed_at).toLocaleString('pt-BR')}.`;
+      macroChartData = data.history;
+      const dates = data.history.map((point) => new Date(`${point.date}T00:00:00Z`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }));
+      drawChart($('#macro-chart'), [
+        { values: data.history.map((point) => point.brent_brl), labels: dates, color: '#45c8ff' },
+        { values: data.history.map((point) => point.usd_brl), labels: dates, color: '#ffc55b' },
+      ], true);
+    }
+
+    async function refreshMacro() {
+      const button = $('#refresh-macro');
+      button.disabled = true;
+      showMessage('#macro-message', 'Buscando Selic, Brent e dólar...');
+      try {
+        renderMacro(await apiFetch('/macro'));
+        showMessage('#macro-message', 'Indicadores atualizados.', 'success');
+      } catch (error) {
+        showMessage('#macro-message', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function refreshAssetChart() {
+      const form = $('#asset-chart-form');
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      showMessage('#asset-chart-message', 'Carregando histórico de preços...');
+      try {
+        const query = new URLSearchParams(paramsFrom(form));
+        const data = await apiFetch(`/market-history?${query}`);
+        assetChartData = data;
+        const points = data.points;
+        const labels = points.map((point) => new Date(point.time).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
+        drawChart($('#asset-chart'), [{ values: points.map((point) => point.price), labels, color: '#45c8ff' }]);
+        $('#asset-chart-meta').textContent = `${data.symbol} · ${data.timeframe} · ${data.exchange} · ${points.length} candles fechados · fonte: ${data.source}.`;
+        showMessage('#asset-chart-message', 'Gráfico atualizado.', 'success');
+      } catch (error) {
+        showMessage('#asset-chart-message', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    $('#refresh-macro').addEventListener('click', refreshMacro);
+    $('#asset-chart-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      refreshAssetChart();
+    });
+    window.addEventListener('resize', () => {
+      if (macroChartData) {
+        const dates = macroChartData.map((point) => new Date(`${point.date}T00:00:00Z`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }));
+        drawChart($('#macro-chart'), [
+          { values: macroChartData.map((point) => point.brent_brl), labels: dates, color: '#45c8ff' },
+          { values: macroChartData.map((point) => point.usd_brl), labels: dates, color: '#ffc55b' },
+        ], true);
+      }
+      if (assetChartData) {
+        const points = assetChartData.points;
+        drawChart($('#asset-chart'), [{
+          values: points.map((point) => point.price),
+          labels: points.map((point) => new Date(point.time).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })),
+          color: '#45c8ff',
+        }]);
+      }
+    });
 
     function renderSignal(data) {
       const result = `
@@ -625,8 +859,14 @@
     }
     refreshHealth();
     refreshCurrencies();
+    refreshMacro();
+    refreshAssetChart();
     window.setInterval(refreshHealth, 30000);
     window.setInterval(refreshCurrencies, 1800000);
+    window.setInterval(refreshMacro, 1800000);
+    window.setInterval(() => {
+      if ($('#view-dashboard').classList.contains('active')) refreshAssetChart();
+    }, 300000);
     window.setInterval(() => {
       if ($('#view-bot').classList.contains('active')) refreshMonitor();
     }, 30000);

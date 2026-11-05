@@ -62,6 +62,8 @@ Documentação interativa: <http://127.0.0.1:8000/docs>.
 | `GET /signal?symbol=BTC/USDT&tf=4h` | Sinal e indicadores da última vela fechada, sem chave |
 | `GET /opportunities?tf=4h&exchange=binance` | Radar técnico de criptomoedas conhecidas e motivos do sinal, sem chave |
 | `GET /currencies` | Cotações indicativas de USD, EUR e GBP em BRL (fonte Frankfurter/ECB) |
+| `GET /macro` | Meta Selic, Brent, USD/BRL, série histórica e indicador heurístico de pressão nos combustíveis |
+| `GET /market-history?symbol=BTC/USDT&tf=1d&exchange=binance` | Histórico de preços para gráficos, usando candles fechados |
 | `GET /backtest?symbol=BTC/USDT&tf=1d&years=5&strategy=trend` | Métricas do backtest, sem chave |
 | `GET /status` | Estado do monitor e últimos erros (requer `X-API-Key` se configurada) |
 | `POST /monitor/start` | Inicia o monitor com `{"watchlist":"BTC/USDT:4h","exchange":"binance"}` (requer chave se configurada) |
@@ -78,7 +80,12 @@ BTC, ETH, BNB, SOL, XRP, ADA e DOGE pela última vela fechada e explica os sinai
 com indicadores técnicos; isso não prevê lucro nem recomenda compra. Também apresenta
 cotações de referência de dólar, euro e libra, atualizadas pela fonte pública
 Frankfurter a cada 30 minutos. Esses valores podem diferir do câmbio comercial
-e não são cotações intradiárias.
+e não são cotações intradiárias. A visão geral também apresenta a meta Selic do
+Copom, o Brent e o USD/BRL, além de gráficos históricos. O alerta de combustíveis
+indica possível pressão quando o Brent convertido em reais sobe pelo menos 5%
+em cerca de 30 dias; é apenas uma referência externa, não uma previsão de
+reajuste nos postos. Os indicadores macro são atualizados automaticamente a
+cada 30 minutos e os gráficos de criptoativos a cada 5 minutos.
 
 ## Configuração
 
