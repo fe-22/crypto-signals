@@ -154,6 +154,47 @@ def build_current_price(symbol, exchange):
     }
 
 
+def build_purchase_quote(symbol, quantity, exchange):
+    """Calcula custo estimado da fracao usando ticker atual e cambio de referencia."""
+    if not math.isfinite(quantity) or quantity <= 0:
+        raise ValueError("a quantidade deve ser maior que zero")
+
+    quote_currency = symbol.split("/", 1)[1]
+    if quote_currency not in ("BRL", "USD", "USDT", "EUR", "GBP"):
+        raise ValueError(
+            "conversao para reais disponivel apenas para pares cotados em BRL, USD, USDT, EUR ou GBP"
+        )
+
+    ticker = build_current_price(symbol, exchange)
+    if quote_currency == "BRL":
+        brl_per_quote_unit = 1.0
+        conversion_note = None
+        rate_date = None
+    else:
+        exchange_rates = build_currency_rates()
+        rate_currency = "USD" if quote_currency == "USDT" else quote_currency
+        brl_per_quote_unit = exchange_rates["rates"][rate_currency]["brl_per_unit"]
+        rate_date = exchange_rates.get("date")
+        if quote_currency == "USDT":
+            conversion_note = "USDT convertido pela cotacao de referencia do USD; paridade aproximada."
+        else:
+            conversion_note = "Cambio de referencia; pode diferir do valor praticado pela corretora."
+
+    total_quote = ticker["price"] * quantity
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "unit_price": ticker["price"],
+        "quote_currency": quote_currency,
+        "total_quote": total_quote,
+        "brl_per_quote_unit": brl_per_quote_unit,
+        "estimated_total_brl": total_quote * brl_per_quote_unit,
+        "exchange": ticker["exchange"],
+        "exchange_rate_date": rate_date,
+        "conversion_note": conversion_note,
+    }
+
+
 def simulate_investment(symbol, quantity, days, exchange):
     """Compara o prazo escolhido com janelas historicas da mesma duracao."""
     if days not in (7, 30, 90, 180, 365):

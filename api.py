@@ -355,6 +355,14 @@ def create_portfolio_position(request: PortfolioPositionRequest, _=Depends(requi
     )}
 
 
+@app.get("/admin/portfolio/quote")
+def quote_portfolio_position(symbol: str, quantity: float, _=Depends(require_admin)):
+    if not math.isfinite(quantity) or quantity <= 0:
+        raise HTTPException(422, "a quantidade deve ser um numero finito maior que zero")
+    symbol, _, exchange = validate(symbol, "1d", DEFAULT_EXCHANGE)
+    return call(service.build_purchase_quote, symbol, quantity, exchange)
+
+
 @app.post("/admin/portfolio/refresh")
 def refresh_admin_portfolio(_=Depends(require_admin)):
     return portfolio.refresh_positions(DEFAULT_EXCHANGE)

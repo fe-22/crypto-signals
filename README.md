@@ -137,6 +137,14 @@ Esses limites são definidos pelo usuário, não incluem taxas, impostos ou
 slippage e não constituem recomendação de compra ou venda. A opção “Encerrar”
 remove a posição do acompanhamento.
 
+No cadastro da carteira, “Calcular pela cotação” busca o preço unitário atual
+na corretora padrão e calcula o total para a quantidade informada. Para pares
+em USDT, o total em reais usa a cotação de referência do dólar como aproximação
+da paridade; BRL, USD, EUR e GBP também são aceitos. O câmbio de referência pode
+diferir do valor executado na corretora. O preço unitário permanece editável
+para registrar o preço real da compra; o total estimado em reais é recalculado
+com a cotação cambial disponível.
+
 As posições ficam em SQLite no caminho `PORTFOLIO_DB` (por padrão,
 `portfolio.sqlite3` na pasta do projeto). Em hospedagens com disco efêmero,
 configure esse caminho para um disco persistente. O monitor roda em cada

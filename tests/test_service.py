@@ -106,6 +106,47 @@ class CurrentPriceTests(unittest.TestCase):
                 service.build_current_price("BTC/USDT", "binance")
 
 
+class PurchaseQuoteTests(unittest.TestCase):
+    def test_purchase_quote_converts_fractional_usdt_amount_to_brl(self):
+        rates = {
+            "date": "2026-11-05",
+            "rates": {"USD": {"brl_per_unit": 5.2}},
+        }
+        with patch.object(
+            service, "build_current_price",
+            return_value={"price": 100000, "exchange": "binance"},
+        ):
+            with patch.object(service, "build_currency_rates", return_value=rates):
+                result = service.build_purchase_quote("BTC/USDT", 0.002, "binance")
+
+        self.assertEqual(result["unit_price"], 100000)
+        self.assertAlmostEqual(result["total_quote"], 200)
+        self.assertAlmostEqual(result["brl_per_quote_unit"], 5.2)
+        self.assertAlmostEqual(result["estimated_total_brl"], 1040)
+        self.assertEqual(result["exchange_rate_date"], "2026-11-05")
+        self.assertIn("aproximada", result["conversion_note"])
+
+    def test_purchase_quote_uses_brl_price_without_external_currency_rate(self):
+        with patch.object(
+            service, "build_current_price",
+            return_value={"price": 50, "exchange": "binance"},
+        ):
+            with patch.object(service, "build_currency_rates") as rates:
+                result = service.build_purchase_quote("ETH/BRL", 0.5, "binance")
+
+        self.assertEqual(result["estimated_total_brl"], 25)
+        self.assertIsNone(result["conversion_note"])
+        rates.assert_not_called()
+
+    def test_purchase_quote_rejects_unsupported_quote_currency(self):
+        with patch.object(
+            service, "build_current_price",
+            return_value={"price": 1, "exchange": "binance"},
+        ):
+            with self.assertRaisesRegex(ValueError, "conversao para reais"):
+                service.build_purchase_quote("BTC/USDC", 1, "binance")
+
+
 class InvestmentSimulationTests(unittest.TestCase):
     def test_simulation_uses_historical_windows_matching_requested_term(self):
         closes = [100 * (1.001 ** index) for index in range(500)]

@@ -40,6 +40,7 @@
     .positive { color: #78e0ad; }
     .negative, .alert { color: #ff9aa3; }
     .status { font-weight: 700; }
+    .estimate { margin-top: 10px; }
     [hidden] { display: none !important; }
     @media (max-width: 560px) { .panel { padding: 18px; } main { margin-top: 5vh; } }
   </style>
@@ -72,6 +73,7 @@
           <label>Preço de compra por unidade
             <input name="purchase_price" type="number" min="0.00000001" step="any" required>
           </label>
+          <button class="secondary" id="calculate-purchase" type="button">Calcular pela cotação</button>
           <label>Meta de lucro (%)
             <input name="target_profit_pct" type="number" min="0.01" max="1000" step="any" value="10" required>
           </label>
@@ -80,6 +82,7 @@
           </label>
           <button type="submit">Cadastrar compra</button>
         </form>
+        <p class="muted estimate" id="purchase-estimate" role="status" aria-live="polite"></p>
         <div class="actions">
           <button class="secondary" id="portfolio-refresh" type="button">Atualizar cotações</button>
           <button class="secondary" id="enable-notifications" type="button" hidden>Ativar notificações</button>
@@ -113,8 +116,11 @@
     const loginMessage = document.querySelector('#login-message');
     const accessMessage = document.querySelector('#access-message');
     const portfolioMessage = document.querySelector('#portfolio-message');
+    const purchaseEstimate = document.querySelector('#purchase-estimate');
     const notifiedAlerts = new Set();
     const formatNumber = new Intl.NumberFormat('pt-BR', { maximumSignificantDigits: 8 });
+    const formatBrl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+    let purchaseConversion = null;
 
     function showRequestError(response, data) {
       if (response.status === 401) {
@@ -259,6 +265,9 @@
       portfolioMessage.textContent = '';
       const formElement = event.currentTarget;
       const form = new FormData(formElement);
+      if (purchaseConversion && purchaseConversion.symbol !== String(form.get('symbol')).trim().toUpperCase()) {
+        purchaseConversion = null;
+      }
       const payload = {
         symbol: form.get('symbol'),
         quantity: Number(form.get('quantity')),
@@ -273,11 +282,79 @@
           body: JSON.stringify(payload)
         }));
         formElement.reset();
+        purchaseConversion = null;
+        purchaseEstimate.textContent = '';
         portfolioMessage.textContent = 'Compra cadastrada.';
         await refreshPortfolio();
       } catch (error) {
         portfolioMessage.textContent = error.message;
       }
+    });
+
+    function updatePurchaseEstimate() {
+      const form = document.querySelector('#portfolio-form');
+      if (!purchaseConversion || purchaseConversion.symbol !== form.elements.symbol.value.trim().toUpperCase()) {
+        purchaseEstimate.textContent = '';
+        return;
+      }
+      const quantity = Number(form.elements.quantity.value);
+      const unitPrice = Number(form.elements.purchase_price.value);
+      if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+        purchaseEstimate.textContent = '';
+        return;
+      }
+      const total = quantity * unitPrice * purchaseConversion.brlPerQuoteUnit;
+      purchaseEstimate.textContent =
+        `Valor estimado: ${formatBrl.format(total)} · ${formatNumber.format(quantity * unitPrice)} ${purchaseConversion.quoteCurrency}` +
+        (purchaseConversion.rateDate ? ` · Câmbio de referência: ${purchaseConversion.rateDate}` : '') +
+        (purchaseConversion.note ? ` · ${purchaseConversion.note}` : '');
+    }
+
+    document.querySelector('#calculate-purchase').addEventListener('click', async () => {
+      const form = document.querySelector('#portfolio-form');
+      const symbol = form.elements.symbol.value.trim().toUpperCase();
+      const quantity = Number(form.elements.quantity.value);
+      if (!symbol || !Number.isFinite(quantity) || quantity <= 0) {
+        purchaseEstimate.textContent = 'Informe um par válido e uma quantidade maior que zero.';
+        return;
+      }
+      const button = document.querySelector('#calculate-purchase');
+      button.disabled = true;
+      purchaseEstimate.textContent = 'Buscando cotação e calculando o total em reais...';
+      try {
+        const quote = await readResponse(await fetch(
+          `/admin/portfolio/quote?${new URLSearchParams({ symbol, quantity: String(quantity) })}`
+        ));
+        if (
+          form.elements.symbol.value.trim().toUpperCase() !== symbol ||
+          Number(form.elements.quantity.value) !== quantity
+        ) {
+          purchaseEstimate.textContent = 'Os dados foram alterados durante a consulta; calcule a cotação novamente.';
+          return;
+        }
+        form.elements.purchase_price.value = quote.unit_price;
+        purchaseConversion = {
+          symbol: quote.symbol,
+          quoteCurrency: quote.quote_currency,
+          brlPerQuoteUnit: quote.brl_per_quote_unit,
+          rateDate: quote.exchange_rate_date,
+          note: quote.conversion_note,
+        };
+        updatePurchaseEstimate();
+      } catch (error) {
+        purchaseConversion = null;
+        purchaseEstimate.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    const portfolioForm = document.querySelector('#portfolio-form');
+    portfolioForm.elements.quantity.addEventListener('input', updatePurchaseEstimate);
+    portfolioForm.elements.purchase_price.addEventListener('input', updatePurchaseEstimate);
+    portfolioForm.elements.symbol.addEventListener('input', () => {
+      purchaseConversion = null;
+      purchaseEstimate.textContent = '';
     });
 
     document.querySelector('#portfolio-refresh').addEventListener('click', refreshPortfolio);

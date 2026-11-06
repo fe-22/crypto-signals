@@ -143,9 +143,26 @@ class HomepageTests(unittest.TestCase):
     def test_portfolio_routes_require_admin_session(self):
         routes = {route.path: route for route in api.app.routes if hasattr(route, "dependant")}
 
-        for path in ("/admin/portfolio", "/admin/portfolio/refresh", "/admin/portfolio/{position_id}"):
+        for path in (
+            "/admin/portfolio", "/admin/portfolio/quote", "/admin/portfolio/refresh",
+            "/admin/portfolio/{position_id}",
+        ):
             dependencies = {item.call for item in routes[path].dependant.dependencies}
             self.assertIn(api.require_admin, dependencies, path)
+
+    def test_portfolio_quote_validates_symbol_and_quantity(self):
+        expected = {"symbol": "BTC/USDT", "estimated_total_brl": 520}
+        with patch.object(api.service, "build_purchase_quote", return_value=expected) as quote:
+            self.assertEqual(api.quote_portfolio_position("btc/usdt", 0.001), expected)
+        quote.assert_called_once_with("BTC/USDT", 0.001, api.DEFAULT_EXCHANGE)
+
+        with self.assertRaises(HTTPException) as invalid_quantity:
+            api.quote_portfolio_position("BTC/USDT", 0)
+        self.assertEqual(invalid_quantity.exception.status_code, 422)
+
+        with self.assertRaises(HTTPException) as invalid_symbol:
+            api.quote_portfolio_position("BTCUSDT", 0.01)
+        self.assertEqual(invalid_symbol.exception.status_code, 422)
 
     def test_portfolio_rejects_invalid_symbols_and_non_finite_amounts(self):
         with self.assertRaises(HTTPException) as invalid_symbol:
