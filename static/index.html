@@ -154,6 +154,11 @@
     .form-card { padding: 18px; }
     .form-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; align-items: end; gap: 12px; }
     .field { display: grid; gap: 7px; color: var(--muted); font-size: .82rem; }
+    .asset-options { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 10px 12px; border: 1px solid #2a4057; border-radius: 9px; }
+    .asset-options legend { padding: 0 5px; color: var(--muted); }
+    .asset-options label { display: flex; align-items: center; gap: 6px; color: #eef5ff; }
+    .asset-options input { width: auto; min-width: auto; padding: 0; border: 0; background: transparent; accent-color: var(--cyan); }
+    #monitor-form { grid-template-columns: minmax(0, 1fr) minmax(130px, 1fr) auto; }
     .button { border-color: #237da4; background: linear-gradient(120deg, #0b80ad, #176b95); color: white; }
     .button:hover { filter: brightness(1.13); }
     .button:disabled { opacity: .6; cursor: wait; }
@@ -188,6 +193,7 @@
       .macro-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid .button { grid-column: span 2; }
+      #monitor-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
       .shell { width: min(100% - 24px, 1180px); padding-top: 18px; }
@@ -213,7 +219,7 @@
   <div class="shell">
     <header>
       <div class="brand">
-        <div class="brand-mark" role="img" aria-label="Logo Fthec Sistemas e Automação"></div>
+        <div class="brand-mark" role="button" tabindex="0" aria-label="Logo Fthec Sistemas e Automação"></div>
         <div>
           <h1>Crypto Signals</h1>
           <p class="subtitle">Painel de análise do mercado cripto</p>
@@ -311,7 +317,7 @@
           </div>
         </section>
         <form class="form-card form-grid" id="dashboard-form">
-          <label class="field">Ativo<input name="symbol" value="BTC/USDT" required pattern="[A-Za-z0-9]{2,10}/[A-Za-z0-9]{2,10}"></label>
+          <label class="field">Ativo<select name="symbol"><option>BTC/USDT</option><option>ETH/USDT</option><option>BNB/USDT</option><option>SOL/USDT</option><option>XRP/USDT</option><option>ADA/USDT</option><option>DOGE/USDT</option></select></label>
           <label class="field">Período<select name="tf"><option>1h</option><option selected>4h</option><option>1d</option><option>15m</option></select></label>
           <label class="field">Corretora<select name="exchange"><option>binance</option><option>kraken</option><option>bybit</option><option>okx</option><option>coinbase</option></select></label>
           <span></span>
@@ -328,7 +334,7 @@
           <p>Preço, tendência, score, RSI, volatilidade e motivos do sinal.</p>
         </div>
         <form class="form-card form-grid" id="signals-form">
-          <label class="field">Ativo<input name="symbol" value="BTC/USDT" required pattern="[A-Za-z0-9]{2,10}/[A-Za-z0-9]{2,10}"></label>
+          <label class="field">Ativo<select name="symbol"><option>BTC/USDT</option><option>ETH/USDT</option><option>BNB/USDT</option><option>SOL/USDT</option><option>XRP/USDT</option><option>ADA/USDT</option><option>DOGE/USDT</option></select></label>
           <label class="field">Período<select name="tf"><option>1h</option><option selected>4h</option><option>1d</option><option>15m</option></select></label>
           <label class="field">Corretora<select name="exchange"><option>binance</option><option>kraken</option><option>bybit</option><option>okx</option><option>coinbase</option></select></label>
           <span></span>
@@ -360,7 +366,7 @@
           <p>Compare a estratégia com compra e manutenção no histórico selecionado.</p>
         </div>
         <form class="form-card form-grid" id="backtest-form">
-          <label class="field">Ativo<input name="symbol" value="BTC/USDT" required pattern="[A-Za-z0-9]{2,10}/[A-Za-z0-9]{2,10}"></label>
+          <label class="field">Ativo<select name="symbol"><option>BTC/USDT</option><option>ETH/USDT</option><option>BNB/USDT</option><option>SOL/USDT</option><option>XRP/USDT</option><option>ADA/USDT</option><option>DOGE/USDT</option></select></label>
           <label class="field">Período<select name="tf"><option>1h</option><option>4h</option><option selected>1d</option><option>15m</option></select></label>
           <label class="field">Anos de histórico<input name="years" type="number" min="0.5" max="8" step="0.5" value="5" required></label>
           <label class="field">Estratégia<select name="strategy"><option value="trend">Tendência</option><option value="score">Score</option></select></label>
@@ -381,9 +387,18 @@
         </div>
         <label class="key-field" for="api-key">Chave API do monitor <input id="api-key" type="password" autocomplete="off" placeholder="Necessária para controlar o monitor"></label>
         <form class="form-card form-grid" id="monitor-form">
-          <label class="field">Lista de ativos<input name="watchlist" value="BTC/USDT:4h,ETH/USDT:4h" placeholder="BTC/USDT:4h,ETH/USDT:4h" required></label>
+          <fieldset class="asset-options">
+            <legend>Ativos (marque um ou mais)</legend>
+            <label><input type="checkbox" name="assets" value="BTC/USDT" checked> BTC/USDT</label>
+            <label><input type="checkbox" name="assets" value="ETH/USDT" checked> ETH/USDT</label>
+            <label><input type="checkbox" name="assets" value="BNB/USDT"> BNB/USDT</label>
+            <label><input type="checkbox" name="assets" value="SOL/USDT"> SOL/USDT</label>
+            <label><input type="checkbox" name="assets" value="XRP/USDT"> XRP/USDT</label>
+            <label><input type="checkbox" name="assets" value="ADA/USDT"> ADA/USDT</label>
+            <label><input type="checkbox" name="assets" value="DOGE/USDT"> DOGE/USDT</label>
+          </fieldset>
+          <label class="field">Período<select name="tf"><option>15m</option><option>1h</option><option selected>4h</option><option>1d</option></select></label>
           <label class="field">Corretora<select name="exchange"><option>binance</option><option>kraken</option><option>bybit</option><option>okx</option><option>coinbase</option></select></label>
-          <span></span><span></span>
           <button class="button" type="submit">Iniciar monitor</button>
         </form>
         <div class="monitor-head section-heading">
@@ -404,6 +419,7 @@
       <div class="footer-credit">
         <span>Crypto Signals · Ferramenta informativa, não recomendação financeira.</span>
         <span>Desenvolvido por Fthec Sistemas e Automação · CNPJ 64.212.742/0001-63 · WhatsApp: <a href="https://wa.me/5511976406169">11 97640-6169</a></span>
+        <span>Para controle de acesso, registramos o horário e o IP de quem abre este painel.</span>
       </div>
       <span><a href="/docs">API</a> · <a href="/info">Informações</a> · <a href="/health">Saúde</a></span>
     </footer>
@@ -820,7 +836,16 @@
 
     $('#monitor-form').addEventListener('submit', async (event) => {
       event.preventDefault();
-      const fields = paramsFrom(event.currentTarget);
+      const form = event.currentTarget;
+      const selectedAssets = [...form.querySelectorAll('input[name="assets"]:checked')].map((input) => input.value);
+      if (!selectedAssets.length) {
+        showMessage('#monitor-message', 'Marque pelo menos um ativo para iniciar o monitor.', 'error');
+        return;
+      }
+      const fields = {
+        watchlist: selectedAssets.map((symbol) => `${symbol}:${form.elements.tf.value}`).join(','),
+        exchange: form.elements.exchange.value
+      };
       showMessage('#monitor-message', 'Iniciando monitor...');
       try {
         const data = await apiFetch('/monitor/start', { method: 'POST', body: JSON.stringify(fields) });
@@ -870,6 +895,21 @@
     window.setInterval(() => {
       if ($('#view-bot').classList.contains('active')) refreshMonitor();
     }, 30000);
+  </script>
+  <script>
+    const managerEntry = document.querySelector('.brand-mark');
+    let managerEntryTimer;
+    const openManager = () => { window.location.href = '/gestor'; };
+    managerEntry.addEventListener('pointerdown', (event) => {
+      managerEntry.setPointerCapture(event.pointerId);
+      managerEntryTimer = window.setTimeout(openManager, 1400);
+    });
+    for (const eventName of ['pointerup', 'pointercancel']) {
+      managerEntry.addEventListener(eventName, () => window.clearTimeout(managerEntryTimer));
+    }
+    managerEntry.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') openManager();
+    });
   </script>
 </body>
 </html>

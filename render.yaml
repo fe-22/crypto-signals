@@ -22,6 +22,8 @@ services:
         value: "300"
       - key: API_KEY
         generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

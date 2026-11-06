@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#06111f">
+  <title>Gestor | Crypto Signals</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #06111f;
+      color: #eef5ff;
+      --panel: #0c1929;
+      --line: #203751;
+      --muted: #91a5ba;
+      --cyan: #45c8ff;
+    }
+    * { box-sizing: border-box; }
+    body { min-width: 320px; min-height: 100vh; margin: 0; background: radial-gradient(ellipse at 75% -10%, #12314b 0, transparent 44%), #06111f; }
+    main { width: min(900px, calc(100% - 32px)); margin: 10vh auto; }
+    .panel { padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 20px 70px rgb(0 0 0 / 24%); }
+    h1 { margin-top: 0; }
+    p, .muted { color: var(--muted); line-height: 1.5; }
+    label { display: block; margin: 18px 0 7px; }
+    input, button { min-height: 44px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 9px; font: inherit; }
+    input { width: 100%; color: #eef5ff; background: #06111f; }
+    button { color: #06111f; background: var(--cyan); border-color: transparent; font-weight: 700; cursor: pointer; }
+    button.secondary { color: #eef5ff; background: transparent; border-color: var(--line); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    .message { min-height: 1.5em; color: #ff9aa3; }
+    .table-wrap { overflow-x: auto; margin-top: 20px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-size: .88rem; }
+    [hidden] { display: none !important; }
+    @media (max-width: 560px) { .panel { padding: 18px; } main { margin-top: 5vh; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel" id="login-panel">
+      <h1>Acesso do gestor</h1>
+      <p>Entre com a senha administrativa configurada para este sistema.</p>
+      <form id="login-form">
+        <label for="password">Senha</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <div class="actions"><button type="submit">Entrar</button><button class="secondary" type="button" onclick="location.href='/'">Voltar ao painel</button></div>
+      </form>
+      <p class="message" id="login-message" role="status"></p>
+    </section>
+    <section class="panel" id="access-panel" hidden>
+      <h1>Acessos ao painel</h1>
+      <p>São registrados o horário e o IP observado pelo servidor. A localização regional não é coletada; IP não identifica uma pessoa pelo nome.</p>
+      <div class="actions">
+        <button id="refresh" type="button">Atualizar</button>
+        <button class="secondary" id="logout" type="button">Sair</button>
+      </div>
+      <p class="message" id="access-message" role="status"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data e hora (UTC)</th><th>Endereço IP</th><th>Região</th></tr></thead>
+          <tbody id="access-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script>
+    const loginPanel = document.querySelector('#login-panel');
+    const accessPanel = document.querySelector('#access-panel');
+    const loginMessage = document.querySelector('#login-message');
+    const accessMessage = document.querySelector('#access-message');
+
+    async function loadAccesses() {
+      accessMessage.textContent = 'Carregando acessos...';
+      try {
+        const response = await fetch('/admin/accesses');
+        if (response.status === 401) {
+          accessPanel.hidden = true;
+          loginPanel.hidden = false;
+          return;
+        }
+        if (!response.ok) throw new Error('Não foi possível carregar os acessos.');
+        const data = await response.json();
+        const rows = document.querySelector('#access-rows');
+        rows.replaceChildren();
+        for (const access of data.accesses) {
+          const row = document.createElement('tr');
+          for (const value of [access.accessed_at, access.ip_address, 'Não disponível']) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.append(cell);
+          }
+          rows.append(row);
+        }
+        accessMessage.textContent = data.accesses.length
+          ? `${data.accesses.length} acesso(s) recente(s).`
+          : 'Nenhum acesso registrado ainda.';
+        loginPanel.hidden = true;
+        accessPanel.hidden = false;
+      } catch (error) {
+        accessMessage.textContent = error.message;
+      }
+    }
+
+    document.querySelector('#login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      loginMessage.textContent = '';
+      try {
+        const response = await fetch('/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.querySelector('#password').value })
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || 'Não foi possível entrar.');
+        }
+        document.querySelector('#password').value = '';
+        await loadAccesses();
+      } catch (error) {
+        loginMessage.textContent = error.message;
+      }
+    });
+
+    document.querySelector('#refresh').addEventListener('click', loadAccesses);
+    document.querySelector('#logout').addEventListener('click', async () => {
+      await fetch('/admin/logout', { method: 'POST' });
+      accessPanel.hidden = true;
+      loginPanel.hidden = false;
+      loginMessage.textContent = 'Sessão encerrada.';
+    });
+    loadAccesses();
+  </script>
+</body>
+</html>

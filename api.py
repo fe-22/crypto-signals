@@ -8,11 +8,17 @@ Docs:    /docs  (interface interativa gerada automaticamente)
 import os
 import re
 import secrets
+import sqlite3
 import threading
-from contextlib import asynccontextmanager
+import time
+import hashlib
+import hmac
+import logging
+from contextlib import asynccontextmanager, closing
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +27,9 @@ import requests
 import service
 
 API_KEY = os.getenv("API_KEY")                       # se definida, exige o header X-API-Key
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
+ADMIN_SESSION_KEY = secrets.token_bytes(32)
 DEFAULT_EXCHANGE = os.getenv("EXCHANGE", "binance")
 _monitor_lock = threading.Lock()
 _monitor_stop = None
@@ -47,6 +56,65 @@ async def lifespan(app):
 app = FastAPI(title="Crypto Signals", version="1.0", lifespan=lifespan)
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
+
+
+def _access_log_path():
+    return Path(os.getenv("ACCESS_LOG_DB", str(Path(__file__).parent / "access_log.sqlite3")))
+
+
+def _record_access(ip_address):
+    database = _access_log_path()
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database, timeout=10)) as connection:
+        with connection:
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS access_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    accessed_at TEXT NOT NULL,
+                    ip_address TEXT NOT NULL
+                )"""
+            )
+            connection.execute(
+                "INSERT INTO access_log (accessed_at, ip_address) VALUES (?, ?)",
+                (datetime.now(timezone.utc).isoformat(timespec="seconds"), ip_address),
+            )
+            connection.execute(
+                "DELETE FROM access_log WHERE id NOT IN "
+                "(SELECT id FROM access_log ORDER BY id DESC LIMIT 500)"
+            )
+
+
+@app.middleware("http")
+async def record_homepage_visits(request: Request, call_next):
+    if request.method == "GET" and request.url.path == "/":
+        try:
+            _record_access(request.client.host if request.client else "unknown")
+        except (OSError, sqlite3.Error):
+            logging.getLogger(__name__).exception("Nao foi possivel registrar acesso ao painel")
+    return await call_next(request)
+
+
+def _session_signature(timestamp):
+    return hmac.new(ADMIN_SESSION_KEY, timestamp.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def _valid_admin_session(token):
+    if not ADMIN_PASSWORD or not token or "." not in token:
+        return False
+    timestamp, signature = token.split(".", 1)
+    if not timestamp.isdigit() or not secrets.compare_digest(_session_signature(timestamp), signature):
+        return False
+    age = int(time.time()) - int(timestamp)
+    return 0 <= age < ADMIN_SESSION_SECONDS
+
+
+def require_admin(request: Request):
+    if not _valid_admin_session(request.cookies.get("admin_session")):
+        raise HTTPException(status_code=401, detail="Acesso administrativo necessario")
+
+
+class AdminLoginRequest(BaseModel):
+    password: str
 
 
 def auth(x_api_key: str | None = Header(default=None)):
@@ -151,6 +219,50 @@ def health():
 @app.get("/")
 def root():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/gestor")
+def admin_page():
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.post("/admin/login")
+def admin_login(request: AdminLoginRequest, response: Response, req: Request):
+    password = ADMIN_PASSWORD
+    if not password:
+        raise HTTPException(status_code=503, detail="Acesso gestor nao configurado")
+    if not secrets.compare_digest(request.password.encode("utf-8"), password.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Senha incorreta")
+    timestamp = str(int(time.time()))
+    response.set_cookie(
+        "admin_session",
+        f"{timestamp}.{_session_signature(timestamp)}",
+        max_age=ADMIN_SESSION_SECONDS,
+        httponly=True,
+        secure=req.url.scheme == "https",
+        samesite="strict",
+        path="/admin",
+    )
+    return {"authenticated": True}
+
+
+@app.post("/admin/logout")
+def admin_logout(response: Response):
+    response.delete_cookie("admin_session", path="/admin", httponly=True, samesite="strict")
+    return {"authenticated": False}
+
+
+@app.get("/admin/accesses")
+def admin_accesses(_=Depends(require_admin)):
+    database = _access_log_path()
+    if not database.exists():
+        return {"accesses": []}
+    with closing(sqlite3.connect(database, timeout=10)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT accessed_at, ip_address FROM access_log ORDER BY id DESC LIMIT 500"
+        ).fetchall()
+    return {"accesses": [dict(row) for row in rows]}
 
 
 @app.get("/info")

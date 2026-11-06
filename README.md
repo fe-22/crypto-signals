@@ -58,6 +58,10 @@ Documentação interativa: <http://127.0.0.1:8000/docs>.
 |---|---|
 | `GET /health` | Verificação de saúde, sem autenticação |
 | `GET /` | Página inicial com a arte do projeto |
+| `GET /gestor` | Tela de acesso do gestor; login protegido por `ADMIN_PASSWORD` |
+| `POST /admin/login` | Inicia uma sessão administrativa |
+| `GET /admin/accesses` | Lista até 500 visitas recentes (requer sessão administrativa) |
+| `POST /admin/logout` | Encerra a sessão administrativa |
 | `GET /info` | Informações básicas e rotas disponíveis em JSON |
 | `GET /signal?symbol=BTC/USDT&tf=4h` | Sinal e indicadores da última vela fechada, sem chave |
 | `GET /opportunities?tf=4h&exchange=binance` | Radar técnico de criptomoedas conhecidas e motivos do sinal, sem chave |
@@ -87,6 +91,21 @@ em cerca de 30 dias; é apenas uma referência externa, não uma previsão de
 reajuste nos postos. Os indicadores macro são atualizados automaticamente a
 cada 30 minutos e os gráficos de criptoativos a cada 5 minutos.
 
+Mantenha o logo do painel pressionado por cerca de 1,4 segundo para abrir a tela
+do gestor. Esse atalho é apenas discreto: a senha `ADMIN_PASSWORD` e a sessão
+validada no servidor são as proteções reais. Configure uma senha forte e única
+nas variáveis secretas do ambiente. A sessão expira após 12 horas.
+
+A tela registra horário UTC e o IP visto pelo servidor quando a página inicial
+é aberta e mantém no máximo os 500 registros mais recentes. Não coleta nomes nem
+localização regional; um IP não identifica por si só uma pessoa, e a região
+exigiria uma fonte de geolocalização separada.
+Os registros ficam em SQLite no caminho definido por `ACCESS_LOG_DB` (por
+padrão, `access_log.sqlite3` na pasta do projeto). Em hospedagens com disco
+efêmero, configure essa variável para um disco persistente se precisar manter
+o histórico após reinicializações ou novos deploys. Informe os usuários sobre
+esse registro e defina um prazo adequado de retenção.
+
 ## Configuração
 
 Defina as variáveis no ambiente do processo. O projeto não carrega um arquivo
@@ -96,6 +115,8 @@ incluído no `.gitignore`.
 | Variável | Padrão | Uso |
 |---|---|---|
 | `API_KEY` | vazio | Habilita autenticação por `X-API-Key` |
+| `ADMIN_PASSWORD` | vazio | Habilita o login da tela de gestão; configure um segredo forte |
+| `ACCESS_LOG_DB` | `access_log.sqlite3` | Caminho do banco SQLite de visitas |
 | `EXCHANGE` | `binance` | Corretora usada pela API e pelo monitor |
 | `ENABLE_MONITOR` | `0` | Define `1` para ativar o monitor em segundo plano |
 | `WATCHLIST` | `BTC/USDT:4h` | Ativos separados por vírgula, no formato `PAR:timeframe` |

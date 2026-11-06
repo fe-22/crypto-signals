@@ -1,11 +1,31 @@
+import asyncio
+from http.cookies import SimpleCookie
 import unittest
+import tempfile
 from unittest.mock import patch
 
 from fastapi.responses import FileResponse
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
+from starlette.requests import Request
 import requests
 
 import api
+
+
+def make_request(path="/", cookie=None):
+    headers = [(b"cookie", cookie.encode("ascii"))] if cookie else []
+    return Request({
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "headers": headers,
+        "client": ("testclient", 1234),
+        "server": ("testserver", 80),
+    })
 
 
 class HomepageTests(unittest.TestCase):
@@ -91,6 +111,44 @@ class HomepageTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             api.opportunities(tf="2m", exchange="binance")
         self.assertEqual(error.exception.status_code, 422)
+
+    def test_manager_access_log_requires_password_and_records_homepage_visit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict("os.environ", {"ACCESS_LOG_DB": f"{directory}\\access.sqlite3"}):
+                with patch.object(api, "ADMIN_PASSWORD", "long-test-password"):
+                    async def next_response(_):
+                        return Response()
+
+                    asyncio.run(api.record_homepage_visits(make_request(), next_response))
+                    with self.assertRaises(HTTPException) as error:
+                        api.require_admin(make_request())
+                    self.assertEqual(error.exception.status_code, 401)
+
+                    login_response = Response()
+                    api.admin_login(
+                        api.AdminLoginRequest(password="long-test-password"),
+                        login_response,
+                        make_request("/admin/login"),
+                    )
+                    cookie = SimpleCookie()
+                    cookie.load(login_response.headers["set-cookie"])
+                    session = f"admin_session={cookie['admin_session'].value}"
+                    authenticated_request = make_request("/admin/accesses", session)
+                    api.require_admin(authenticated_request)
+                    accesses = api.admin_accesses()
+
+        self.assertEqual(len(accesses["accesses"]), 1)
+        self.assertEqual(accesses["accesses"][0]["ip_address"], "testclient")
+
+    def test_manager_login_is_disabled_without_configured_password(self):
+        with patch.object(api, "ADMIN_PASSWORD", None):
+            with self.assertRaises(HTTPException) as error:
+                api.admin_login(
+                    api.AdminLoginRequest(password="anything"),
+                    Response(),
+                    make_request("/admin/login"),
+                )
+        self.assertEqual(error.exception.status_code, 503)
 
 
 if __name__ == "__main__":
