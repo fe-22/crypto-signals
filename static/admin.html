@@ -37,6 +37,8 @@
     .portfolio-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 14px; }
     .portfolio-form label { margin-top: 12px; }
     .portfolio-form button { align-self: end; margin-top: 12px; }
+    .portfolio-form .form-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .portfolio-form .form-actions button { margin-top: 0; }
     .positive { color: #78e0ad; }
     .negative, .alert { color: #ff9aa3; }
     .status { font-weight: 700; }
@@ -71,18 +73,20 @@
             <input name="quantity" type="number" min="0.00000001" step="any" required>
           </label>
           <label>Preço de compra por unidade
-            <input name="purchase_price" type="number" min="0.00000001" step="any" required>
+            <input name="purchase_price" type="number" min="0.00000001" step="any" placeholder="Busque a cotação atual" required>
           </label>
-          <button class="secondary" id="calculate-purchase" type="button">Calcular pela cotação</button>
           <label>Meta de lucro (%)
             <input name="target_profit_pct" type="number" min="0.01" max="1000" step="any" value="10" required>
           </label>
           <label>Limite de perda (%)
             <input name="stop_loss_pct" type="number" min="0.01" max="100" step="any" value="5" required>
           </label>
-          <button type="submit">Cadastrar compra</button>
+          <div class="form-actions">
+            <button id="calculate-purchase" type="button">Buscar cotação e calcular valor</button>
+            <button class="secondary" type="submit">Cadastrar compra</button>
+          </div>
         </form>
-        <p class="muted estimate" id="purchase-estimate" role="status" aria-live="polite"></p>
+        <p class="muted estimate" id="purchase-estimate" role="status" aria-live="polite">Informe o par e a quantidade; depois busque a cotação para ver o total estimado em reais.</p>
         <div class="actions">
           <button class="secondary" id="portfolio-refresh" type="button">Atualizar cotações</button>
           <button class="secondary" id="enable-notifications" type="button" hidden>Ativar notificações</button>
