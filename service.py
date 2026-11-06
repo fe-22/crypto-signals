@@ -180,6 +180,28 @@ def simulate_investment(symbol, quantity, days, exchange):
     if len(historical_returns) < 20:
         raise ValueError("historico insuficiente para estimar esse prazo com seguranca")
 
+    analysis = cs.analyze(history)
+    if analysis.empty:
+        raise ValueError("historico insuficiente para calcular o sinal tecnico")
+    signal_row = analysis.iloc[-1]
+    signal_guidance = {
+        "COMPRAR": {
+            "action": "COMPRAR",
+            "title": "Sinal técnico: comprar",
+            "message": "Os indicadores atendem ao critério técnico de compra; isso não garante valorização.",
+        },
+        "EVITAR": {
+            "action": "EVITAR",
+            "title": "Não comprar · sinal de venda se já possui",
+            "message": "Os indicadores apontam cautela. Considere seu preço de entrada e seus riscos; nenhuma ordem será executada.",
+        },
+        "AGUARDAR": {
+            "action": "AGUARDAR",
+            "title": "Aguardar; sem indicação de compra",
+            "message": "Os indicadores não confirmam compra nem acionam o critério técnico de cautela.",
+        },
+    }[signal_row.signal]
+
     ordered_returns = sorted(historical_returns)
 
     def percentile(value):
@@ -215,6 +237,14 @@ def simulate_investment(symbol, quantity, days, exchange):
         "historical_windows": len(historical_returns),
         "history_start": history.index[0].isoformat(),
         "history_end": history.index[-1].isoformat(),
+        "technical_guidance": {
+            **signal_guidance,
+            "signal": signal_row.signal,
+            "score": int(signal_row.score),
+            "rsi": round(float(signal_row.rsi), 1),
+            "timeframe": "1d",
+            "reasons": cs.explain(signal_row),
+        },
         "scenarios": {
             "lower_10th_percentile": scenario(lower_return),
             "median": scenario(median_return),

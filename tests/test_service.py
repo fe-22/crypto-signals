@@ -110,7 +110,7 @@ class InvestmentSimulationTests(unittest.TestCase):
     def test_simulation_uses_historical_windows_matching_requested_term(self):
         closes = [100 * (1.001 ** index) for index in range(500)]
         history = pd.DataFrame(
-            {"close": closes},
+            {"open": closes, "high": closes, "low": closes, "close": closes, "volume": [1.0] * len(closes)},
             index=pd.date_range("2025-01-01", periods=len(closes), freq="D"),
         )
         with patch.object(service, "_cached", side_effect=lambda key, ttl, fn: fn()):
@@ -119,7 +119,12 @@ class InvestmentSimulationTests(unittest.TestCase):
                     service, "build_current_price",
                     return_value={"price": 200, "exchange": "binance"},
                 ):
-                    result = service.simulate_investment("BTC/USDT", 0.05, 30, "binance")
+                    with patch.object(
+                        service.cs, "analyze",
+                        return_value=pd.DataFrame({"signal": ["COMPRAR"], "score": [4], "rsi": [55.0]}),
+                    ):
+                        with patch.object(service.cs, "explain", return_value="indicadores favoraveis"):
+                            result = service.simulate_investment("BTC/USDT", 0.05, 30, "binance")
 
         fetch.assert_called_once()
         self.assertEqual(result["historical_windows"], 469)
@@ -127,6 +132,35 @@ class InvestmentSimulationTests(unittest.TestCase):
         self.assertAlmostEqual(result["scenarios"]["median"]["return_pct"], 3.04, places=1)
         self.assertAlmostEqual(result["scenarios"]["median"]["estimated_profit"], 0.3, places=2)
         self.assertEqual(result["quote_currency"], "USDT")
+        self.assertEqual(result["technical_guidance"]["action"], "COMPRAR")
+        self.assertEqual(result["technical_guidance"]["score"], 4)
+
+    def test_simulation_guidance_explains_wait_and_existing_position_caution(self):
+        history = pd.DataFrame(
+            {"open": [100.0] * 500, "high": [100.0] * 500, "low": [100.0] * 500,
+             "close": [100.0] * 500, "volume": [1.0] * 500},
+            index=pd.date_range("2025-01-01", periods=500, freq="D"),
+        )
+        expected = {
+            "AGUARDAR": "Aguardar; sem indicação de compra",
+            "EVITAR": "Não comprar · sinal de venda se já possui",
+        }
+        for signal, title in expected.items():
+            with self.subTest(signal=signal):
+                with patch.object(service, "_cached", side_effect=lambda key, ttl, fn: fn()):
+                    with patch.object(service, "_fetch_market_data", return_value=(history, "binance")):
+                        with patch.object(
+                            service, "build_current_price",
+                            return_value={"price": 100, "exchange": "binance"},
+                        ):
+                            with patch.object(
+                                service.cs, "analyze",
+                                return_value=pd.DataFrame({"signal": [signal], "score": [0], "rsi": [50.0]}),
+                            ):
+                                with patch.object(service.cs, "explain", return_value="sem confirmacao"):
+                                    result = service.simulate_investment("BTC/USDT", 0.01, 30, "binance")
+
+                self.assertEqual(result["technical_guidance"]["title"], title)
 
     def test_simulation_requires_sufficient_history_for_selected_term(self):
         history = pd.DataFrame(

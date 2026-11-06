@@ -127,6 +127,9 @@
     .card-value.signal { color: var(--gold); }
     .card-value.signal.COMPRAR { color: var(--green); }
     .card-value.signal.EVITAR { color: var(--red); }
+    .card.guidance.comprar .card-value { color: var(--green); }
+    .card.guidance.evitar .card-value { color: var(--red); }
+    .card.guidance.aguardar .card-value { color: var(--gold); }
     .rates-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
     .rates-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
     .rate-card { position: relative; overflow: hidden; min-height: 132px; }
@@ -507,15 +510,21 @@
       const cards = [
         [`Cotação atual · ${data.symbol}`, `${money(data.current_price)} ${data.quote_currency}`, `Corretora: ${data.exchange}`],
         [`Valor inicial · ${data.quantity} ${data.symbol.split('/')[0]}`, `${money(data.estimated_investment)} ${data.quote_currency}`, `Prazo: ${data.days} dias`],
+        [
+          `Leitura técnica · ${data.technical_guidance.timeframe}`,
+          data.technical_guidance.title,
+          `${data.technical_guidance.message} Sinal ${data.technical_guidance.signal} · score ${data.technical_guidance.score > 0 ? '+' : ''}${data.technical_guidance.score} · RSI ${data.technical_guidance.rsi}. ${data.technical_guidance.reasons}`,
+          `guidance ${data.technical_guidance.action.toLowerCase()}`,
+        ],
         ...scenarios.map(([label, scenario]) => [
           label,
           `${scenario.return_pct > 0 ? '+' : ''}${scenario.return_pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`,
           `Resultado: ${scenario.estimated_profit > 0 ? '+' : ''}${money(scenario.estimated_profit)} ${data.quote_currency} · Valor final: ${money(scenario.estimated_value)} ${data.quote_currency}`,
         ]),
       ];
-      cards.forEach(([label, value, detail]) => {
+      cards.forEach(([label, value, detail, detailClass = '']) => {
         const card = document.createElement('article');
-        card.className = 'card';
+        card.className = `card${detailClass ? ` ${detailClass}` : ''}`;
         const title = document.createElement('div');
         title.className = 'card-label';
         title.textContent = label;

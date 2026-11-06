@@ -103,7 +103,11 @@ mediana dos retornos, além do valor inicial e da cotação atual. O histórico 
 de até três anos de candles diários; se não houver janelas suficientes, a
 simulação informa que não pode ser calculada. Os valores ficam na moeda de
 cotação do par (por exemplo, USDT), não incluem taxas, impostos ou slippage, e
-cenários passados não preveem nem garantem resultados futuros.
+cenários passados não preveem nem garantem resultados futuros. O simulador
+também mostra a leitura técnica atual: comprar, aguardar ou evitar; no sinal de
+cautela, esclarece que quem já possui o ativo pode avaliar uma venda. É uma
+heurística baseada nos indicadores, não recomendação financeira nem execução
+de ordens.
 
 Mantenha o logo do painel pressionado por cerca de 1,4 segundo para abrir a tela
 do gestor. Esse atalho é apenas discreto: a senha `ADMIN_PASSWORD` e a sessão
