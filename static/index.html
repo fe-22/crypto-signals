@@ -153,6 +153,8 @@
     .opportunity-reasons li + li { margin-top: 5px; }
     .form-card { padding: 18px; }
     .form-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; align-items: end; gap: 12px; }
+    #simulation-form { grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; }
+    .simulation-result { margin-top: 14px; }
     .field { display: grid; gap: 7px; color: var(--muted); font-size: .82rem; }
     .asset-options { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 10px 12px; border: 1px solid #2a4057; border-radius: 9px; }
     .asset-options legend { padding: 0 5px; color: var(--muted); }
@@ -193,6 +195,7 @@
       .macro-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .form-grid .button { grid-column: span 2; }
+      #simulation-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       #monitor-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
@@ -248,6 +251,40 @@
           <h2>Visão geral</h2>
           <p>Consulte indicadores técnicos calculados a partir da última vela fechada.</p>
         </div>
+        <section aria-labelledby="simulation-title">
+          <div class="section-heading">
+            <h2 id="simulation-title">Simulador de compra</h2>
+            <p>Informe a fração e o prazo para comparar com períodos históricos de mesma duração.</p>
+          </div>
+          <form class="form-card form-grid" id="simulation-form">
+            <label class="field">Ativo
+              <select name="symbol">
+                <option>BTC/USDT</option><option>ETH/USDT</option><option>BNB/USDT</option>
+                <option>SOL/USDT</option><option>XRP/USDT</option><option>ADA/USDT</option><option>DOGE/USDT</option>
+              </select>
+            </label>
+            <label class="field">Fração a comprar
+              <input name="quantity" type="number" min="0.00000001" step="any" placeholder="Ex.: 0,01" required>
+            </label>
+            <label class="field">Prazo
+              <select name="days">
+                <option value="7">7 dias</option><option value="30">30 dias</option>
+                <option value="90">90 dias</option><option value="180">180 dias</option>
+                <option value="365">1 ano</option>
+              </select>
+            </label>
+            <label class="field">Corretora
+              <select name="exchange">
+                <option>binance</option><option>kraken</option><option>bybit</option>
+                <option>okx</option><option>coinbase</option>
+              </select>
+            </label>
+            <button class="button" type="submit">Simular</button>
+          </form>
+          <p class="message" id="simulation-message" role="status" aria-live="polite"></p>
+          <div class="grid simulation-result" id="simulation-result" aria-live="polite"></div>
+          <p class="disclaimer">A faixa mostra percentis 10 e 90 e a mediana de variações históricas em janelas do mesmo prazo. Não é previsão nem garantia; pode haver perdas. Valores na moeda de cotação do par (ex.: USDT), sem taxas, impostos ou slippage.</p>
+        </section>
         <section aria-labelledby="currencies-title">
           <div class="rates-heading section-heading">
             <div>
@@ -457,6 +494,45 @@
 
     function money(value) {
       return Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+    }
+
+    function renderSimulation(data) {
+      const container = $('#simulation-result');
+      container.replaceChildren();
+      const scenarios = [
+        ['Faixa histórica · percentil 10', data.scenarios.lower_10th_percentile],
+        ['Mediana histórica', data.scenarios.median],
+        ['Faixa histórica · percentil 90', data.scenarios.upper_90th_percentile],
+      ];
+      const cards = [
+        [`Cotação atual · ${data.symbol}`, `${money(data.current_price)} ${data.quote_currency}`, `Corretora: ${data.exchange}`],
+        [`Valor inicial · ${data.quantity} ${data.symbol.split('/')[0]}`, `${money(data.estimated_investment)} ${data.quote_currency}`, `Prazo: ${data.days} dias`],
+        ...scenarios.map(([label, scenario]) => [
+          label,
+          `${scenario.return_pct > 0 ? '+' : ''}${scenario.return_pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`,
+          `Resultado: ${scenario.estimated_profit > 0 ? '+' : ''}${money(scenario.estimated_profit)} ${data.quote_currency} · Valor final: ${money(scenario.estimated_value)} ${data.quote_currency}`,
+        ]),
+      ];
+      cards.forEach(([label, value, detail]) => {
+        const card = document.createElement('article');
+        card.className = 'card';
+        const title = document.createElement('div');
+        title.className = 'card-label';
+        title.textContent = label;
+        const amount = document.createElement('div');
+        amount.className = 'card-value';
+        amount.textContent = value;
+        const info = document.createElement('div');
+        info.className = 'card-label';
+        info.textContent = detail;
+        card.append(title, amount, info);
+        container.append(card);
+      });
+      showMessage(
+        '#simulation-message',
+        `Comparação baseada em ${data.historical_windows} janelas históricas · dados de ${new Date(data.history_start).toLocaleDateString('pt-BR')} a ${new Date(data.history_end).toLocaleDateString('pt-BR')}.`,
+        'success'
+      );
     }
 
     function renderCurrencyRates(data) {
@@ -781,6 +857,28 @@
       }
     });
     $('#refresh-currencies').addEventListener('click', refreshCurrencies);
+
+    $('#simulation-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const fields = paramsFrom(form);
+      fields.quantity = Number(fields.quantity);
+      fields.days = Number(fields.days);
+      $('#simulation-result').replaceChildren();
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      showMessage('#simulation-message', 'Consultando cotações e comparando o histórico...');
+      try {
+        renderSimulation(await apiFetch('/simulation', {
+          method: 'POST',
+          body: JSON.stringify(fields),
+        }));
+      } catch (error) {
+        showMessage('#simulation-message', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     $('#backtest-form').addEventListener('submit', async (event) => {
       event.preventDefault();

@@ -1,8 +1,9 @@
 import asyncio
+import os
 from http.cookies import SimpleCookie
 import unittest
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.responses import FileResponse
 from fastapi import HTTPException, Response
@@ -32,7 +33,7 @@ class HomepageTests(unittest.TestCase):
     def test_market_data_routes_are_public_but_monitor_routes_remain_protected(self):
         routes = {route.path: route for route in api.app.routes if hasattr(route, "dependant")}
 
-        for path in ("/signal", "/opportunities", "/backtest", "/currencies", "/macro", "/market-history"):
+        for path in ("/signal", "/opportunities", "/simulation", "/backtest", "/currencies", "/macro", "/market-history"):
             dependencies = {item.call for item in routes[path].dependant.dependencies}
             self.assertNotIn(api.auth, dependencies, path)
 
@@ -96,10 +97,107 @@ class HomepageTests(unittest.TestCase):
             self.assertEqual(api.market_history("ETH/USDT", "1d", "kraken"), expected)
         history.assert_called_once_with("ETH/USDT", "1d", "kraken")
 
+    def test_simulation_validates_inputs_and_uses_selected_exchange(self):
+        expected = {"symbol": "BTC/USDT", "days": 30, "scenarios": {}}
+        request = api.SimulationRequest(
+            symbol="btc/usdt", quantity=0.01, days=30, exchange="kraken"
+        )
+        with patch.object(api.service, "simulate_investment", return_value=expected) as simulate:
+            self.assertEqual(api.simulation(request), expected)
+        simulate.assert_called_once_with("BTC/USDT", 0.01, 30, "kraken")
+
+        with self.assertRaises(HTTPException) as invalid_term:
+            api.simulation(api.SimulationRequest(
+                symbol="BTC/USDT", quantity=0.01, days=45, exchange="binance"
+            ))
+        self.assertEqual(invalid_term.exception.status_code, 422)
+
+        with self.assertRaises(HTTPException) as invalid_symbol:
+            api.simulation(api.SimulationRequest(
+                symbol="BTCUSDT", quantity=0.01, days=30, exchange="binance"
+            ))
+        self.assertEqual(invalid_symbol.exception.status_code, 422)
+
     def test_market_history_rejects_invalid_assets(self):
         with self.assertRaises(HTTPException) as error:
             api.market_history("ETHUSDT", "1d", "binance")
         self.assertEqual(error.exception.status_code, 422)
+
+    def test_backtest_rejects_high_memory_timeframe_and_range(self):
+        with self.assertRaises(HTTPException) as error:
+            api.backtest(symbol="BTC/USDT", tf="15m", years=8, exchange="binance")
+
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIn("reduza o prazo", error.exception.detail)
+
+    def test_backtest_returns_service_unavailable_when_another_is_running(self):
+        busy_slot = Mock()
+        busy_slot.acquire.return_value = False
+        with patch.object(api.service, "_backtest_slot", busy_slot):
+            with self.assertRaises(HTTPException) as error:
+                api.backtest(symbol="BTC/USDT", tf="1d", years=1, exchange="binance")
+
+        self.assertEqual(error.exception.status_code, 503)
+        self.assertIn("tente novamente", error.exception.detail)
+
+    def test_portfolio_routes_require_admin_session(self):
+        routes = {route.path: route for route in api.app.routes if hasattr(route, "dependant")}
+
+        for path in ("/admin/portfolio", "/admin/portfolio/refresh", "/admin/portfolio/{position_id}"):
+            dependencies = {item.call for item in routes[path].dependant.dependencies}
+            self.assertIn(api.require_admin, dependencies, path)
+
+    def test_portfolio_rejects_invalid_symbols_and_non_finite_amounts(self):
+        with self.assertRaises(HTTPException) as invalid_symbol:
+            api.create_portfolio_position(
+                api.PortfolioPositionRequest(
+                    symbol="BTCUSDT", quantity=0.1, purchase_price=100, target_profit_pct=10,
+                    stop_loss_pct=5,
+                )
+            )
+        self.assertEqual(invalid_symbol.exception.status_code, 422)
+
+        with self.assertRaises(HTTPException) as invalid_amount:
+            api.create_portfolio_position(
+                api.PortfolioPositionRequest(
+                    symbol="BTC/USDT", quantity=float("inf"), purchase_price=100,
+                    target_profit_pct=10, stop_loss_pct=5,
+                )
+            )
+        self.assertEqual(invalid_amount.exception.status_code, 422)
+
+    def test_portfolio_routes_store_refresh_and_remove_a_fractional_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict("os.environ", {"PORTFOLIO_DB": os.path.join(directory, "portfolio.sqlite3")}):
+                position = api.create_portfolio_position(
+                    api.PortfolioPositionRequest(
+                        symbol="btc/usdt", quantity=0.005, purchase_price=50000,
+                        target_profit_pct=12, stop_loss_pct=6,
+                    )
+                )["position"]
+                with patch.object(
+                    api.service, "build_current_price",
+                    return_value={"price": 51000, "exchange": "binance"},
+                ):
+                    refreshed = api.refresh_admin_portfolio()
+                self.assertEqual(refreshed["positions"][0]["id"], position["id"])
+                self.assertAlmostEqual(refreshed["positions"][0]["profit_loss"], 5)
+                self.assertTrue(api.delete_portfolio_position(position["id"])["deleted"])
+                self.assertEqual(api.admin_portfolio()["positions"], [])
+
+    def test_lifespan_starts_and_stops_portfolio_monitor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict("os.environ", {
+                "PORTFOLIO_DB": os.path.join(directory, "portfolio.sqlite3"),
+                "ENABLE_MONITOR": "0",
+            }):
+                async def run_lifespan():
+                    async with api.app.router.lifespan_context(api.app):
+                        self.assertTrue(api._portfolio_monitor_thread.is_alive())
+
+                asyncio.run(run_lifespan())
+
+        self.assertIsNone(api._portfolio_monitor_thread)
 
     def test_opportunities_endpoint_uses_validated_timeframe_and_exchange(self):
         expected = {"assets": [], "candidates": []}

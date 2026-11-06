@@ -4,6 +4,7 @@ Cuida de cache, montagem do sinal em JSON, backtest sob demanda e monitoramento.
 """
 import os
 import math
+import statistics
 import threading
 import time
 from bisect import bisect_right
@@ -18,6 +19,7 @@ BACKTEST_TTL = 3600                             # segundos (resultado de backtes
 CURRENCY_RATES_TTL = 1800                       # atualizacao diaria da fonte ECB
 MACRO_TTL = 1800
 PRICE_HISTORY_TTL = 300
+MAX_BACKTEST_CANDLES = 50_000
 OPPORTUNITY_SYMBOLS = (
     "BTC/USDT",
     "ETH/USDT",
@@ -32,6 +34,11 @@ EXCHANGE_FALLBACKS = ("binance", "kraken", "bybit", "okx", "coinbase")
 _cache = {}
 _lock = threading.Lock()
 _backtest_slot = threading.Semaphore(1)         # 1 backtest por vez (e pesado)
+
+
+class BacktestBusyError(RuntimeError):
+    """Raised instead of queueing another memory-intensive backtest."""
+
 
 STATE = {"started_at": None, "last_check": None, "watch": {}, "errors": []}
 
@@ -123,6 +130,100 @@ def build_signal(symbol, tf, exchange):
         "stop_reference": round(price - 2 * float(row.atr), 8) if row.signal == "COMPRAR" else None,
         "reasons": cs.explain(row),
         "disclaimer": DISCLAIMER,
+    }
+
+
+def build_current_price(symbol, exchange):
+    """Cotacao mais recente informada pela corretora, sem depender de candle fechado."""
+    import ccxt
+
+    def fetch_ticker(pair, exchange_id):
+        client = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+        ticker = client.fetch_ticker(pair)
+        price = ticker.get("last")
+        if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+            raise ValueError(f"cotacao invalida para {pair}")
+        return float(price)
+
+    price, used_exchange = _fetch_market_data(fetch_ticker, symbol, exchange=exchange)
+    return {
+        "symbol": symbol,
+        "price": price,
+        "exchange": used_exchange,
+        "updated_at": _now(),
+    }
+
+
+def simulate_investment(symbol, quantity, days, exchange):
+    """Compara o prazo escolhido com janelas historicas da mesma duracao."""
+    if days not in (7, 30, 90, 180, 365):
+        raise ValueError("prazo invalido; escolha 7, 30, 90, 180 ou 365 dias")
+    if not math.isfinite(quantity) or quantity <= 0:
+        raise ValueError("a quantidade deve ser maior que zero")
+
+    history, used_exchange = _cached(
+        ("simulation-history", symbol, exchange),
+        PRICE_HISTORY_TTL,
+        lambda: _fetch_market_data(cs.fetch_history, symbol, "1d", 3, exchange=exchange),
+    )
+    history = history.iloc[:-1]
+    closes = history["close"].to_numpy(dtype=float)
+    if len(closes) <= days:
+        raise ValueError("historico insuficiente para comparar esse prazo")
+    if not all(math.isfinite(price) and price > 0 for price in closes):
+        raise ValueError("historico de precos invalido para este ativo")
+
+    historical_returns = [
+        closes[index + days] / closes[index] - 1
+        for index in range(len(closes) - days)
+    ]
+    if len(historical_returns) < 20:
+        raise ValueError("historico insuficiente para estimar esse prazo com seguranca")
+
+    ordered_returns = sorted(historical_returns)
+
+    def percentile(value):
+        position = (len(ordered_returns) - 1) * value
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return ordered_returns[lower]
+        weight = position - lower
+        return ordered_returns[lower] * (1 - weight) + ordered_returns[upper] * weight
+
+    current_price = build_current_price(symbol, used_exchange)
+    investment = quantity * current_price["price"]
+    median_return = statistics.median(ordered_returns)
+    lower_return = percentile(0.10)
+    upper_return = percentile(0.90)
+
+    def scenario(return_pct):
+        return {
+            "return_pct": round(return_pct * 100, 2),
+            "estimated_value": round(investment * (1 + return_pct), 8),
+            "estimated_profit": round(investment * return_pct, 8),
+        }
+
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "days": days,
+        "exchange": current_price["exchange"],
+        "quote_currency": symbol.split("/", 1)[1],
+        "current_price": current_price["price"],
+        "estimated_investment": round(investment, 8),
+        "historical_windows": len(historical_returns),
+        "history_start": history.index[0].isoformat(),
+        "history_end": history.index[-1].isoformat(),
+        "scenarios": {
+            "lower_10th_percentile": scenario(lower_return),
+            "median": scenario(median_return),
+            "upper_90th_percentile": scenario(upper_return),
+        },
+        "disclaimer": (
+            "Cenarios calculados a partir de variacoes historicas em janelas do mesmo prazo. "
+            "Nao sao previsoes: o resultado real pode ser muito diferente e incluir perdas."
+        ),
     }
 
 
@@ -419,9 +520,18 @@ def build_macro_indicators():
 def run_backtest(symbol, tf, years, strategy, exchange, split=0.7):
     years = min(max(years, 0.5), 8)
     split = min(max(split, 0.5), 0.9)
+    timeframe_minutes = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}[tf]
+    estimated_candles = math.ceil(years * 365 * 24 * 60 / timeframe_minutes)
+    if estimated_candles > MAX_BACKTEST_CANDLES:
+        raise ValueError(
+            f"backtest excede o limite de {MAX_BACKTEST_CANDLES} candles; "
+            "reduza o prazo ou escolha um timeframe maior"
+        )
 
     def job():
-        with _backtest_slot:
+        if not _backtest_slot.acquire(blocking=False):
+            raise BacktestBusyError("backtest ocupado; tente novamente em alguns instantes")
+        try:
             history, used_exchange = _fetch_market_data(
                 cs.fetch_history, symbol, tf, years, exchange=exchange
             )
@@ -429,6 +539,8 @@ def run_backtest(symbol, tf, years, strategy, exchange, split=0.7):
             if d.empty:
                 raise ValueError("historico insuficiente para o backtest")
             return cs.backtest(d, strategy, split=split), used_exchange
+        finally:
+            _backtest_slot.release()
 
     result, used_exchange = _cached(("bt", symbol, tf, years, strategy, exchange, split), BACKTEST_TTL, job)
     return {"symbol": symbol, "timeframe": tf, "strategy": strategy, "exchange": used_exchange,

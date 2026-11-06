@@ -1,6 +1,8 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
+import sys
 
 import pandas as pd
 
@@ -79,6 +81,96 @@ class MarketHistoryTests(unittest.TestCase):
 
         self.assertEqual([point["price"] for point in result["points"]], [100.0, 110.0])
         self.assertEqual(result["exchange"], "binance")
+
+
+class CurrentPriceTests(unittest.TestCase):
+    def test_current_price_uses_the_exchange_ticker(self):
+        exchange = Mock()
+        exchange.fetch_ticker.return_value = {"last": 12.5}
+        ccxt = SimpleNamespace(binance=Mock(return_value=exchange))
+
+        with patch.dict(sys.modules, {"ccxt": ccxt}):
+            result = service.build_current_price("BTC/USDT", "binance")
+
+        exchange.fetch_ticker.assert_called_once_with("BTC/USDT")
+        self.assertEqual(result["price"], 12.5)
+        self.assertEqual(result["exchange"], "binance")
+
+    def test_current_price_rejects_missing_or_non_positive_ticker(self):
+        exchange = Mock()
+        exchange.fetch_ticker.return_value = {"last": 0}
+        ccxt = SimpleNamespace(binance=Mock(return_value=exchange))
+
+        with patch.dict(sys.modules, {"ccxt": ccxt}):
+            with self.assertRaisesRegex(ValueError, "cotacao invalida"):
+                service.build_current_price("BTC/USDT", "binance")
+
+
+class InvestmentSimulationTests(unittest.TestCase):
+    def test_simulation_uses_historical_windows_matching_requested_term(self):
+        closes = [100 * (1.001 ** index) for index in range(500)]
+        history = pd.DataFrame(
+            {"close": closes},
+            index=pd.date_range("2025-01-01", periods=len(closes), freq="D"),
+        )
+        with patch.object(service, "_cached", side_effect=lambda key, ttl, fn: fn()):
+            with patch.object(service, "_fetch_market_data", return_value=(history, "binance")) as fetch:
+                with patch.object(
+                    service, "build_current_price",
+                    return_value={"price": 200, "exchange": "binance"},
+                ):
+                    result = service.simulate_investment("BTC/USDT", 0.05, 30, "binance")
+
+        fetch.assert_called_once()
+        self.assertEqual(result["historical_windows"], 469)
+        self.assertEqual(result["estimated_investment"], 10)
+        self.assertAlmostEqual(result["scenarios"]["median"]["return_pct"], 3.04, places=1)
+        self.assertAlmostEqual(result["scenarios"]["median"]["estimated_profit"], 0.3, places=2)
+        self.assertEqual(result["quote_currency"], "USDT")
+
+    def test_simulation_requires_sufficient_history_for_selected_term(self):
+        history = pd.DataFrame(
+            {"close": [100.0] * 60},
+            index=pd.date_range("2025-01-01", periods=60, freq="D"),
+        )
+        with patch.object(service, "_cached", side_effect=lambda key, ttl, fn: fn()):
+            with patch.object(service, "_fetch_market_data", return_value=(history, "binance")):
+                with self.assertRaisesRegex(ValueError, "historico insuficiente"):
+                    service.simulate_investment("BTC/USDT", 0.01, 90, "binance")
+
+
+class BacktestResourceLimitTests(unittest.TestCase):
+    def test_rejects_backtest_that_exceeds_candle_budget_before_fetching_history(self):
+        with patch.object(service, "_fetch_market_data") as fetch:
+            with self.assertRaisesRegex(ValueError, "limite de 50000 candles"):
+                service.run_backtest("BTC/USDT", "15m", 8, "trend", "binance")
+
+        fetch.assert_not_called()
+
+    def test_allows_supported_backtest_within_candle_budget(self):
+        history = pd.DataFrame(
+            {"close": [100.0] * 1000, "open": [100.0] * 1000, "high": [101.0] * 1000,
+             "low": [99.0] * 1000, "volume": [1.0] * 1000},
+            index=pd.date_range("2025-01-01", periods=1000, freq="D"),
+        )
+        analyzed = pd.DataFrame({"close": [100.0, 101.0]})
+        with patch.object(service, "_fetch_market_data", return_value=(history, "binance")):
+            with patch.object(service.cs, "analyze", return_value=analyzed):
+                with patch.object(service.cs, "backtest", return_value={"result": {}}) as backtest:
+                    result = service.run_backtest("BTC/USDT", "1d", 5, "trend", "binance")
+
+        backtest.assert_called_once()
+        self.assertEqual(result["exchange"], "binance")
+
+    def test_rejects_concurrent_backtest_instead_of_queueing(self):
+        busy_slot = Mock()
+        busy_slot.acquire.return_value = False
+        with patch.object(service, "_backtest_slot", busy_slot):
+            with self.assertRaisesRegex(service.BacktestBusyError, "backtest ocupado"):
+                service.run_backtest("BTC/USDT", "1d", 1, "trend", "binance")
+
+        busy_slot.acquire.assert_called_once_with(blocking=False)
+        busy_slot.release.assert_not_called()
 
 
 class MacroIndicatorTests(unittest.TestCase):

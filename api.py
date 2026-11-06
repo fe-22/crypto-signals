@@ -14,6 +14,7 @@ import time
 import hashlib
 import hmac
 import logging
+import math
 from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 import requests
 
 import service
+import portfolio
 
 API_KEY = os.getenv("API_KEY")                       # se definida, exige o header X-API-Key
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
@@ -35,6 +37,8 @@ _monitor_lock = threading.Lock()
 _monitor_stop = None
 _monitor_thread = None
 _monitor_config = {}
+_portfolio_monitor_stop = None
+_portfolio_monitor_thread = None
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,10}/[A-Z0-9]{2,10}$")
 TIMEFRAMES = {"15m", "1h", "4h", "1d"}
@@ -43,6 +47,7 @@ EXCHANGES = {"binance", "kraken", "bybit", "okx", "coinbase"}
 
 @asynccontextmanager
 async def lifespan(app):
+    _start_portfolio_monitor()
     if os.getenv("ENABLE_MONITOR", "0") == "1":
         try:
             items = _validated_watchlist(os.getenv("WATCHLIST", "BTC/USDT:4h"), DEFAULT_EXCHANGE)
@@ -51,6 +56,7 @@ async def lifespan(app):
             print(f"[monitor] configuracao invalida: {exc}")
     yield
     _stop_monitor()
+    _stop_portfolio_monitor()
 
 
 app = FastAPI(title="Crypto Signals", version="1.0", lifespan=lifespan)
@@ -139,6 +145,52 @@ class MonitorRequest(BaseModel):
     exchange: str | None = None
 
 
+class PortfolioPositionRequest(BaseModel):
+    symbol: str
+    quantity: float
+    purchase_price: float
+    target_profit_pct: float = 10
+    stop_loss_pct: float = 5
+
+
+class SimulationRequest(BaseModel):
+    symbol: str
+    quantity: float
+    days: int
+    exchange: str | None = None
+
+
+def _start_portfolio_monitor():
+    global _portfolio_monitor_stop, _portfolio_monitor_thread
+    with _monitor_lock:
+        if _portfolio_monitor_thread and _portfolio_monitor_thread.is_alive():
+            return
+        portfolio.initialize()
+        _portfolio_monitor_stop = threading.Event()
+        _portfolio_monitor_thread = threading.Thread(
+            target=portfolio.monitor_loop,
+            args=(_portfolio_monitor_stop, DEFAULT_EXCHANGE),
+            daemon=True,
+        )
+        _portfolio_monitor_thread.start()
+
+
+def _stop_portfolio_monitor():
+    global _portfolio_monitor_stop, _portfolio_monitor_thread
+    with _monitor_lock:
+        stop, thread = _portfolio_monitor_stop, _portfolio_monitor_thread
+        if not stop or not thread or not thread.is_alive():
+            _portfolio_monitor_stop = None
+            _portfolio_monitor_thread = None
+            return
+        stop.set()
+    thread.join(timeout=10)
+    with _monitor_lock:
+        if not thread.is_alive():
+            _portfolio_monitor_stop = None
+            _portfolio_monitor_thread = None
+
+
 def _validated_watchlist(text, exchange):
     exchange = (exchange or DEFAULT_EXCHANGE).lower()
     if exchange not in EXCHANGES:
@@ -200,6 +252,8 @@ def _stop_monitor():
 def call(fn, *args):
     try:
         return fn(*args)
+    except service.BacktestBusyError as e:
+        raise HTTPException(503, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e))
     except Exception as e:
@@ -265,10 +319,58 @@ def admin_accesses(_=Depends(require_admin)):
     return {"accesses": [dict(row) for row in rows]}
 
 
+@app.get("/admin/portfolio")
+def admin_portfolio(_=Depends(require_admin)):
+    return {"positions": portfolio.list_positions()}
+
+
+@app.post("/admin/portfolio")
+def create_portfolio_position(request: PortfolioPositionRequest, _=Depends(require_admin)):
+    symbol = request.symbol.strip().upper()
+    if not SYMBOL_RE.fullmatch(symbol):
+        raise HTTPException(422, "symbol invalido (ex.: BTC/USDT)")
+    values = (
+        request.quantity,
+        request.purchase_price,
+        request.target_profit_pct,
+        request.stop_loss_pct,
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise HTTPException(422, "os valores da posicao devem ser numeros finitos")
+    if request.quantity <= 0 or request.purchase_price <= 0:
+        raise HTTPException(422, "quantidade e preco de compra devem ser maiores que zero")
+    if not 0 < request.target_profit_pct <= 1000:
+        raise HTTPException(422, "meta de lucro deve estar entre 0 e 1000%")
+    if not 0 < request.stop_loss_pct <= 100:
+        raise HTTPException(422, "limite de perda deve estar entre 0 e 100%")
+    position_id = portfolio.add_position(
+        symbol,
+        request.quantity,
+        request.purchase_price,
+        request.target_profit_pct,
+        request.stop_loss_pct,
+    )
+    return {"id": position_id, "position": next(
+        position for position in portfolio.list_positions() if position["id"] == position_id
+    )}
+
+
+@app.post("/admin/portfolio/refresh")
+def refresh_admin_portfolio(_=Depends(require_admin)):
+    return portfolio.refresh_positions(DEFAULT_EXCHANGE)
+
+
+@app.delete("/admin/portfolio/{position_id}")
+def delete_portfolio_position(position_id: int, _=Depends(require_admin)):
+    if position_id <= 0 or not portfolio.remove_position(position_id):
+        raise HTTPException(404, "posicao nao encontrada")
+    return {"deleted": True}
+
+
 @app.get("/info")
 def info():
     return {"name": "Crypto Signals", "docs": "/docs",
-            "endpoints": ["/signal", "/opportunities", "/currencies", "/macro",
+            "endpoints": ["/signal", "/opportunities", "/simulation", "/currencies", "/macro",
                           "/market-history", "/backtest", "/status", "/health"],
             "disclaimer": service.DISCLAIMER}
 
@@ -312,6 +414,16 @@ def macro():
 def market_history(symbol: str = "BTC/USDT", tf: str = "1d", exchange: str | None = None):
     symbol, tf, exchange = validate(symbol, tf, exchange)
     return call(service.build_price_history, symbol, tf, exchange)
+
+
+@app.post("/simulation")
+def simulation(request: SimulationRequest):
+    if not math.isfinite(request.quantity) or request.quantity <= 0:
+        raise HTTPException(422, "a quantidade deve ser um numero finito maior que zero")
+    symbol, _, exchange = validate(request.symbol, "1d", request.exchange)
+    if request.days not in (7, 30, 90, 180, 365):
+        raise HTTPException(422, "prazo invalido; escolha 7, 30, 90, 180 ou 365 dias")
+    return call(service.simulate_investment, symbol, request.quantity, request.days, exchange)
 
 
 @app.get("/currencies")

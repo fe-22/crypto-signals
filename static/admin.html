@@ -33,6 +33,13 @@
     table { width: 100%; border-collapse: collapse; text-align: left; }
     th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
     th { color: var(--muted); font-size: .88rem; }
+    .portfolio { margin: 28px 0; padding-top: 8px; border-top: 1px solid var(--line); }
+    .portfolio-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 14px; }
+    .portfolio-form label { margin-top: 12px; }
+    .portfolio-form button { align-self: end; margin-top: 12px; }
+    .positive { color: #78e0ad; }
+    .negative, .alert { color: #ff9aa3; }
+    .status { font-weight: 700; }
     [hidden] { display: none !important; }
     @media (max-width: 560px) { .panel { padding: 18px; } main { margin-top: 5vh; } }
   </style>
@@ -50,8 +57,43 @@
       <p class="message" id="login-message" role="status"></p>
     </section>
     <section class="panel" id="access-panel" hidden>
-      <h1>Acessos ao painel</h1>
+      <h1>Gestor e carteira</h1>
       <p>São registrados o horário e o IP observado pelo servidor. A localização regional não é coletada; IP não identifica uma pessoa pelo nome.</p>
+      <section class="portfolio" aria-labelledby="portfolio-heading">
+        <h2 id="portfolio-heading">Minha carteira</h2>
+        <p>Cadastre suas compras fracionadas e defina os próprios limites. Preços e resultados usam a moeda de cotação do par (por exemplo, USDT). Os alertas não são recomendação financeira.</p>
+        <form id="portfolio-form" class="portfolio-form">
+          <label>Ativo (par da corretora)
+            <input name="symbol" type="text" placeholder="BTC/USDT" pattern="[A-Za-z0-9]{2,10}/[A-Za-z0-9]{2,10}" required>
+          </label>
+          <label>Quantidade comprada
+            <input name="quantity" type="number" min="0.00000001" step="any" required>
+          </label>
+          <label>Preço de compra por unidade
+            <input name="purchase_price" type="number" min="0.00000001" step="any" required>
+          </label>
+          <label>Meta de lucro (%)
+            <input name="target_profit_pct" type="number" min="0.01" max="1000" step="any" value="10" required>
+          </label>
+          <label>Limite de perda (%)
+            <input name="stop_loss_pct" type="number" min="0.01" max="100" step="any" value="5" required>
+          </label>
+          <button type="submit">Cadastrar compra</button>
+        </form>
+        <div class="actions">
+          <button class="secondary" id="portfolio-refresh" type="button">Atualizar cotações</button>
+          <button class="secondary" id="enable-notifications" type="button" hidden>Ativar notificações</button>
+        </div>
+        <p class="message" id="portfolio-message" role="status" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Ativo</th><th>Quantidade</th><th>Compra</th><th>Cotação</th><th>Resultado</th><th>Alvo / limite</th><th>Status</th><th>Ação</th></tr>
+            </thead>
+            <tbody id="portfolio-rows"></tbody>
+          </table>
+        </div>
+      </section>
       <div class="actions">
         <button id="refresh" type="button">Atualizar</button>
         <button class="secondary" id="logout" type="button">Sair</button>
@@ -70,6 +112,95 @@
     const accessPanel = document.querySelector('#access-panel');
     const loginMessage = document.querySelector('#login-message');
     const accessMessage = document.querySelector('#access-message');
+    const portfolioMessage = document.querySelector('#portfolio-message');
+    const notifiedAlerts = new Set();
+    const formatNumber = new Intl.NumberFormat('pt-BR', { maximumSignificantDigits: 8 });
+
+    function showRequestError(response, data) {
+      if (response.status === 401) {
+        accessPanel.hidden = true;
+        loginPanel.hidden = false;
+      }
+      throw new Error(data.detail || 'Não foi possível concluir a operação.');
+    }
+
+    async function readResponse(response) {
+      const data = await response.json();
+      if (!response.ok) showRequestError(response, data);
+      return data;
+    }
+
+    function renderPortfolio(positions) {
+      const rows = document.querySelector('#portfolio-rows');
+      rows.replaceChildren();
+      for (const position of positions) {
+        const row = document.createElement('tr');
+        const result = position.profit_loss;
+        const status = position.alert_type === 'target'
+          ? 'Meta de lucro atingida'
+          : position.alert_type === 'stop'
+            ? 'Limite de perda atingido'
+            : position.price_error || (position.current_price === null ? 'Aguardando cotação' : 'Monitorando');
+        const values = [
+          position.symbol,
+          formatNumber.format(position.quantity),
+          formatNumber.format(position.purchase_price),
+          position.current_price === null ? '—' : formatNumber.format(position.current_price),
+          result === null
+            ? '—'
+            : `${result >= 0 ? '+' : ''}${formatNumber.format(result)} (${position.return_pct.toFixed(2)}%)`,
+          `${formatNumber.format(position.target_price)} / ${formatNumber.format(position.stop_price)}`,
+          status
+        ];
+        for (const [index, value] of values.entries()) {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          if (index === 4 && result !== null) cell.className = result >= 0 ? 'positive' : 'negative';
+          if (index === 6 && position.alert_type) cell.className = 'status alert';
+          row.append(cell);
+        }
+        const actionCell = document.createElement('td');
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'secondary';
+        closeButton.textContent = 'Encerrar';
+        closeButton.addEventListener('click', async () => {
+          if (!confirm(`Remover ${position.symbol} da carteira?`)) return;
+          try {
+            await readResponse(await fetch(`/admin/portfolio/${position.id}`, { method: 'DELETE' }));
+            await refreshPortfolio();
+          } catch (error) {
+            portfolioMessage.textContent = error.message;
+          }
+        });
+        actionCell.append(closeButton);
+        row.append(actionCell);
+        rows.append(row);
+
+        if (position.alert_type) {
+          const alertKey = `${position.id}:${position.alert_type}`;
+          if (!notifiedAlerts.has(alertKey) && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(`Alerta da carteira: ${position.symbol}`, { body: status });
+          }
+          notifiedAlerts.add(alertKey);
+        }
+      }
+    }
+
+    async function refreshPortfolio() {
+      if (accessPanel.hidden) return;
+      portfolioMessage.textContent = 'Atualizando cotações...';
+      try {
+        const data = await readResponse(await fetch('/admin/portfolio/refresh', { method: 'POST' }));
+        renderPortfolio(data.positions);
+        const alerts = data.positions.filter((position) => position.alert_type);
+        portfolioMessage.textContent = alerts.length
+          ? `Alerta: ${alerts.map((position) => `${position.symbol} — ${position.alert_type === 'target' ? 'meta de lucro' : 'limite de perda'} atingido`).join('; ')}.`
+          : `Monitoramento ativo. Última atualização: ${data.positions[0]?.price_checked_at || 'aguardando cotação'}.`;
+      } catch (error) {
+        portfolioMessage.textContent = error.message;
+      }
+    }
 
     async function loadAccesses() {
       accessMessage.textContent = 'Carregando acessos...';
@@ -98,6 +229,7 @@
           : 'Nenhum acesso registrado ainda.';
         loginPanel.hidden = true;
         accessPanel.hidden = false;
+        await refreshPortfolio();
       } catch (error) {
         accessMessage.textContent = error.message;
       }
@@ -113,8 +245,7 @@
           body: JSON.stringify({ password: document.querySelector('#password').value })
         });
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.detail || 'Não foi possível entrar.');
+          showRequestError(response, await response.json());
         }
         document.querySelector('#password').value = '';
         await loadAccesses();
@@ -123,13 +254,57 @@
       }
     });
 
-    document.querySelector('#refresh').addEventListener('click', loadAccesses);
+    document.querySelector('#portfolio-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      portfolioMessage.textContent = '';
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const payload = {
+        symbol: form.get('symbol'),
+        quantity: Number(form.get('quantity')),
+        purchase_price: Number(form.get('purchase_price')),
+        target_profit_pct: Number(form.get('target_profit_pct')),
+        stop_loss_pct: Number(form.get('stop_loss_pct'))
+      };
+      try {
+        await readResponse(await fetch('/admin/portfolio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }));
+        formElement.reset();
+        portfolioMessage.textContent = 'Compra cadastrada.';
+        await refreshPortfolio();
+      } catch (error) {
+        portfolioMessage.textContent = error.message;
+      }
+    });
+
+    document.querySelector('#portfolio-refresh').addEventListener('click', refreshPortfolio);
+    const notificationsButton = document.querySelector('#enable-notifications');
+    if ('Notification' in window) {
+      notificationsButton.hidden = false;
+      notificationsButton.addEventListener('click', async () => {
+        try {
+          const permission = await Notification.requestPermission();
+          portfolioMessage.textContent = permission === 'granted'
+            ? 'Notificações do navegador ativadas.'
+            : 'As notificações do navegador não foram autorizadas.';
+        } catch (error) {
+          portfolioMessage.textContent = error.message;
+        }
+      });
+    }
+    document.querySelector('#refresh').addEventListener('click', async () => {
+      await loadAccesses();
+    });
     document.querySelector('#logout').addEventListener('click', async () => {
       await fetch('/admin/logout', { method: 'POST' });
       accessPanel.hidden = true;
       loginPanel.hidden = false;
       loginMessage.textContent = 'Sessão encerrada.';
     });
+    window.setInterval(refreshPortfolio, 60_000);
     loadAccesses();
   </script>
 </body>

@@ -61,6 +61,10 @@ Documentação interativa: <http://127.0.0.1:8000/docs>.
 | `GET /gestor` | Tela de acesso do gestor; login protegido por `ADMIN_PASSWORD` |
 | `POST /admin/login` | Inicia uma sessão administrativa |
 | `GET /admin/accesses` | Lista até 500 visitas recentes (requer sessão administrativa) |
+| `GET /admin/portfolio` | Lista compras cadastradas (requer sessão administrativa) |
+| `POST /admin/portfolio` | Cadastra um ativo, quantidade fracionada, preço de compra e limites (requer sessão administrativa) |
+| `POST /admin/portfolio/refresh` | Atualiza cotações e verifica alertas (requer sessão administrativa) |
+| `DELETE /admin/portfolio/{id}` | Remove uma posição encerrada (requer sessão administrativa) |
 | `POST /admin/logout` | Encerra a sessão administrativa |
 | `GET /info` | Informações básicas e rotas disponíveis em JSON |
 | `GET /signal?symbol=BTC/USDT&tf=4h` | Sinal e indicadores da última vela fechada, sem chave |
@@ -68,6 +72,7 @@ Documentação interativa: <http://127.0.0.1:8000/docs>.
 | `GET /currencies` | Cotações indicativas de USD, EUR e GBP em BRL (fonte Frankfurter/ECB) |
 | `GET /macro` | Meta Selic, Brent, USD/BRL, série histórica e indicador heurístico de pressão nos combustíveis |
 | `GET /market-history?symbol=BTC/USDT&tf=1d&exchange=binance` | Histórico de preços para gráficos, usando candles fechados |
+| `POST /simulation` | Simula uma fração e compara o prazo com retornos históricos (JSON: `symbol`, `quantity`, `days`, `exchange`) |
 | `GET /backtest?symbol=BTC/USDT&tf=1d&years=5&strategy=trend` | Métricas do backtest, sem chave |
 | `GET /status` | Estado do monitor e últimos erros (requer `X-API-Key` se configurada) |
 | `POST /monitor/start` | Inicia o monitor com `{"watchlist":"BTC/USDT:4h","exchange":"binance"}` (requer chave se configurada) |
@@ -91,6 +96,15 @@ em cerca de 30 dias; é apenas uma referência externa, não uma previsão de
 reajuste nos postos. Os indicadores macro são atualizados automaticamente a
 cada 30 minutos e os gráficos de criptoativos a cada 5 minutos.
 
+Na visão geral, o simulador recebe o par, a fração, a corretora e um prazo de
+7, 30, 90, 180 ou 365 dias. Compara o valor simulado com todas as janelas
+históricas disponíveis de igual duração e mostra os percentis 10 e 90 e a
+mediana dos retornos, além do valor inicial e da cotação atual. O histórico é
+de até três anos de candles diários; se não houver janelas suficientes, a
+simulação informa que não pode ser calculada. Os valores ficam na moeda de
+cotação do par (por exemplo, USDT), não incluem taxas, impostos ou slippage, e
+cenários passados não preveem nem garantem resultados futuros.
+
 Mantenha o logo do painel pressionado por cerca de 1,4 segundo para abrir a tela
 do gestor. Esse atalho é apenas discreto: a senha `ADMIN_PASSWORD` e a sessão
 validada no servidor são as proteções reais. Configure uma senha forte e única
@@ -106,6 +120,30 @@ efêmero, configure essa variável para um disco persistente se precisar manter
 o histórico após reinicializações ou novos deploys. Informe os usuários sobre
 esse registro e defina um prazo adequado de retenção.
 
+Na mesma tela de gestor, a carteira permite registrar o par negociado (por
+exemplo, `BTC/USDT`), a quantidade comprada — inclusive fracionada — e o preço
+unitário de compra na moeda de cotação do par. Defina uma meta de lucro e um
+limite de perda; o sistema acompanha o preço informado pela corretora e gera
+um alerta uma única vez quando qualquer limite é atingido. O monitoramento roda
+no servidor a cada `POLL_SECONDS` (mínimo de 60 segundos), mesmo sem a tela
+aberta. Para receber mensagens fora do painel, configure o Telegram; sem ele, o
+alerta fica registrado na carteira e nos logs. A tela atualiza os dados a cada
+minuto e pode também enviar notificações do navegador enquanto estiver aberta.
+Esses limites são definidos pelo usuário, não incluem taxas, impostos ou
+slippage e não constituem recomendação de compra ou venda. A opção “Encerrar”
+remove a posição do acompanhamento.
+
+As posições ficam em SQLite no caminho `PORTFOLIO_DB` (por padrão,
+`portfolio.sqlite3` na pasta do projeto). Em hospedagens com disco efêmero,
+configure esse caminho para um disco persistente. O monitor roda em cada
+instância do serviço; use apenas uma instância para evitar alertas duplicados.
+
+Para limitar o uso de memória do serviço, o backtest da API aceita no máximo
+50.000 candles estimados. Períodos extensos em timeframes curtos podem ser
+recusados; reduza o número de anos ou escolha um timeframe maior. Apenas um
+backtest pode executar por vez; novas solicitações simultâneas recebem HTTP 503
+em vez de ficarem na fila consumindo recursos.
+
 ## Configuração
 
 Defina as variáveis no ambiente do processo. O projeto não carrega um arquivo
@@ -117,6 +155,7 @@ incluído no `.gitignore`.
 | `API_KEY` | vazio | Habilita autenticação por `X-API-Key` |
 | `ADMIN_PASSWORD` | vazio | Habilita o login da tela de gestão; configure um segredo forte |
 | `ACCESS_LOG_DB` | `access_log.sqlite3` | Caminho do banco SQLite de visitas |
+| `PORTFOLIO_DB` | `portfolio.sqlite3` | Caminho do banco SQLite da carteira |
 | `EXCHANGE` | `binance` | Corretora usada pela API e pelo monitor |
 | `ENABLE_MONITOR` | `0` | Define `1` para ativar o monitor em segundo plano |
 | `WATCHLIST` | `BTC/USDT:4h` | Ativos separados por vírgula, no formato `PAR:timeframe` |
@@ -139,7 +178,8 @@ python -m unittest discover -s tests -v
 O arquivo `render.yaml` contém o Blueprint do serviço. No Render, crie um
 Blueprint a partir deste repositório e informe os segredos do Telegram quando
 solicitado. O serviço gera uma `API_KEY` automaticamente. Use uma única
-instância se o monitor estiver habilitado para evitar alertas duplicados.
+instância para evitar alertas duplicados; o monitor da carteira funciona
+independentemente de `ENABLE_MONITOR`.
 
 ## Indicadores e limites
 
